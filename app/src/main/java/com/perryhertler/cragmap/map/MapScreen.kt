@@ -66,6 +66,13 @@ import org.maplibre.geojson.Point
 private val DEVILS_LAKE_CENTER = LatLng(43.41655, -89.72343)
 private const val INITIAL_ZOOM = 13.5
 
+// Fixed fraction of screen height to reserve at the bottom when centering a
+// search result, so the highlighted pin lands above where the bottom sheet
+// covers the map instead of right underneath its top edge. A fixed fraction
+// (rather than the sheet's real measured height) is simpler and good enough —
+// see the "should the area be top-centered" discussion this came out of.
+private const val BOTTOM_SHEET_PADDING_FRACTION = 0.55f
+
 // Zoom bands from the blueprint's zoom-tiered UI table.
 private const val PARK_MIN = 0.0
 private const val PARK_MAX = 13.0
@@ -304,6 +311,8 @@ fun MapScreen() {
                 if (map == null) {
                     Log.w("CragMap", "onResultSelected: mapLibreMap was null, skipping camera move")
                 } else if (result.lat != null && result.lng != null) {
+                    val bottomPadding = (mapView.height * BOTTOM_SHEET_PADDING_FRACTION).toInt()
+                    map.setPadding(0, 0, 0, bottomPadding)
                     map.easeCamera(
                         CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), FORMATION_MIN + 0.5),
                         800
@@ -335,6 +344,7 @@ fun MapScreen() {
                 onDismiss = {
                     sheetClimbs = null
                     loadedStyle?.let { clearHighlight(it) }
+                    mapLibreMap?.setPadding(0, 0, 0, 0)
                 }
             )
         }
