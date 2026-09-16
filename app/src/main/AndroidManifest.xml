@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- No INTERNET permission: everything ships bundled and is read from local
+         files at runtime. Add ACCESS_FINE_LOCATION when the blue-dot lands. -->
+
+    <application
+        android:name=".CragMapApplication"
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.CragMap"
+        android:usesCleartextTraffic="true">
+
+        <!-- usesCleartextTraffic is required because the local tile server is
+             plain http://127.0.0.1 — traffic never leaves the device. -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
