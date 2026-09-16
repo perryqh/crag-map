@@ -116,37 +116,36 @@ def build_db(path, rows_area, rows_climb, max_depth):
         DROP TABLE IF EXISTS pack_meta;
 
         CREATE TABLE area (
-          uuid         TEXT PRIMARY KEY,
+          uuid         TEXT NOT NULL,
           name         TEXT NOT NULL,
-          parent_uuid  TEXT REFERENCES area(uuid),
+          parent_uuid  TEXT,
           depth        INTEGER NOT NULL,
           is_leaf      INTEGER NOT NULL,
           lat          REAL,
           lng          REAL,
-          total_climbs INTEGER NOT NULL
+          total_climbs INTEGER NOT NULL,
+          PRIMARY KEY(uuid)
         );
 
         CREATE TABLE climb (
-          uuid        TEXT PRIMARY KEY,
-          area_uuid   TEXT NOT NULL REFERENCES area(uuid),
+          uuid        TEXT NOT NULL,
+          area_uuid   TEXT NOT NULL,
           name        TEXT NOT NULL,
           yds_grade   TEXT,
           climb_type  TEXT,
           description TEXT,
           lat         REAL,
-          lng         REAL
+          lng         REAL,
+          PRIMARY KEY(uuid)
         );
 
         CREATE VIRTUAL TABLE climb_fts USING fts4(name, yds_grade, content='climb');
 
         CREATE TABLE pack_meta (
-          key   TEXT PRIMARY KEY,
-          value TEXT
+          key   TEXT NOT NULL,
+          value TEXT,
+          PRIMARY KEY(key)
         );
-
-        CREATE INDEX idx_area_parent ON area(parent_uuid);
-        CREATE INDEX idx_area_depth ON area(depth);
-        CREATE INDEX idx_climb_area ON climb(area_uuid);
         """
     )
     cur.executemany(
