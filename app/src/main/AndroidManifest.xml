@@ -2,7 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- No INTERNET permission: everything ships bundled and is read from local
-         files at runtime. Add ACCESS_FINE_LOCATION when the blue-dot lands. -->
+         files at runtime. ACCESS_FINE_LOCATION drives the on-map GPS "you are here"
+         dot — GPS works via satellites, no signal needed, matching the offline design. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <application
         android:name=".CragMapApplication"

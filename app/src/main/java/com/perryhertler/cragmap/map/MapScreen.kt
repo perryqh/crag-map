@@ -1,12 +1,17 @@
 package com.perryhertler.cragmap.map
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.perryhertler.cragmap.CragMapApplication
@@ -29,6 +35,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.location.LocationComponentActivationOptions
+import org.maplibre.android.location.modes.CameraMode
+import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
@@ -39,6 +48,7 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.android.style.sources.RasterSource
 import org.maplibre.android.style.sources.TileSet
 import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.Point
 
 // Devil's Lake climbing-area centroid (verified live against OpenBeta's area metadata).
 private val DEVILS_LAKE_CENTER = LatLng(43.41655, -89.72343)
@@ -62,9 +72,32 @@ fun MapScreen() {
     val scope = rememberCoroutineScope()
 
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
+    var loadedStyle by remember { mutableStateOf<Style?>(null) }
     var sheetClimbs by remember { mutableStateOf<List<ClimbEntity>?>(null) }
     var sheetAreaName by remember { mutableStateOf("") }
     var highlightedClimbUuid by remember { mutableStateOf<String?>(null) }
+    var locationPermissionGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        locationPermissionGranted = granted
+        if (granted) {
+            val map = mapLibreMap
+            val style = loadedStyle
+            if (map != null && style != null) enableLocationComponent(context, map, style)
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!locationPermissionGranted) {
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
@@ -104,9 +137,12 @@ fun MapScreen() {
                         addAreaLayer(builder, "bluff", bluffs, "#0969da", BLUFF_MIN, BLUFF_MAX)
                         addAreaLayer(builder, "subarea", subareas, "#7c3aed", SUBAREA_MIN, SUBAREA_MAX)
                         addAreaLayer(builder, "formation", formations, "#cf222e", FORMATION_MIN, FORMATION_MAX)
+                        addHighlightLayer(builder)
 
                         map.setStyle(builder) { style ->
                             Log.d("CragMap", "style loaded, fully loaded=${style.isFullyLoaded}, layers=${style.layers.map { it.id }}")
+                            loadedStyle = style
+                            if (locationPermissionGranted) enableLocationComponent(context, map, style)
                         }
                     } catch (e: Exception) {
                         Log.e("CragMap", "area-layer setup failed", e)
@@ -120,6 +156,10 @@ fun MapScreen() {
                     if (feature != null) {
                         val uuid = feature.getStringProperty("uuid")
                         val name = feature.getStringProperty("name")
+                        val geom = feature.geometry()
+                        if (geom is Point) {
+                            loadedStyle?.let { setHighlight(it, geom.latitude(), geom.longitude()) }
+                        }
                         scope.launch {
                             val climbs = withContext(Dispatchers.IO) { db.climbDao().climbsInArea(uuid) }
                             sheetClimbs = climbs
@@ -147,6 +187,7 @@ fun MapScreen() {
                         CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), FORMATION_MIN + 0.5),
                         800
                     )
+                    loadedStyle?.let { setHighlight(it, result.lat, result.lng) }
                 } else {
                     Log.w("CragMap", "onResultSelected: result had null lat/lng")
                 }
@@ -170,10 +211,55 @@ fun MapScreen() {
                 areaName = sheetAreaName,
                 climbs = climbs,
                 highlightedClimbUuid = highlightedClimbUuid,
-                onDismiss = { sheetClimbs = null }
+                onDismiss = {
+                    sheetClimbs = null
+                    loadedStyle?.let { clearHighlight(it) }
+                }
             )
         }
     }
+}
+
+private const val HIGHLIGHT_SOURCE_ID = "highlight-source"
+private const val HIGHLIGHT_LAYER_ID = "highlight-circle"
+private val EMPTY_FEATURE_COLLECTION_JSON = """{"type":"FeatureCollection","features":[]}"""
+
+private fun addHighlightLayer(style: Style.Builder) {
+    val source = GeoJsonSource(HIGHLIGHT_SOURCE_ID, FeatureCollection.fromJson(EMPTY_FEATURE_COLLECTION_JSON))
+    style.withSource(source)
+    // Distinct ring around whichever pin is currently selected (search result or tapped
+    // formation). No zoom restriction — it should stay visible whatever zoom the user's at.
+    // A plain CircleLayer, same as the (working) area pins — no SymbolLayer involved.
+    val highlightLayer = CircleLayer(HIGHLIGHT_LAYER_ID, HIGHLIGHT_SOURCE_ID).withProperties(
+        PropertyFactory.circleRadius(16f),
+        PropertyFactory.circleOpacity(0f),
+        PropertyFactory.circleStrokeWidth(3f),
+        PropertyFactory.circleStrokeColor("#ffd700"),
+        PropertyFactory.circleStrokeOpacity(1f)
+    )
+    style.withLayer(highlightLayer)
+}
+
+private fun setHighlight(style: Style, lat: Double, lng: Double) {
+    val geoJson = """{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[$lng,$lat]},"properties":{}}]}"""
+    style.getSourceAs<GeoJsonSource>(HIGHLIGHT_SOURCE_ID)?.setGeoJson(FeatureCollection.fromJson(geoJson))
+}
+
+private fun clearHighlight(style: Style) {
+    style.getSourceAs<GeoJsonSource>(HIGHLIGHT_SOURCE_ID)?.setGeoJson(FeatureCollection.fromJson(EMPTY_FEATURE_COLLECTION_JSON))
+}
+
+private fun enableLocationComponent(context: Context, map: MapLibreMap, style: Style) {
+    val options = LocationComponentActivationOptions.builder(context, style)
+        .useDefaultLocationEngine(true)
+        .build()
+    map.locationComponent.apply {
+        activateLocationComponent(options)
+        isLocationComponentEnabled = true
+        cameraMode = CameraMode.NONE
+        renderMode = RenderMode.COMPASS
+    }
+    Log.d("CragMap", "location component enabled")
 }
 
 private fun buildBaseStyle(context: Context): Style.Builder {
