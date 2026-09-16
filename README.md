@@ -21,7 +21,16 @@ Working spike, verified on-device: pins render at every zoom band, tapping a for
 Known limitations:
 - No on-map text labels — a `SymbolLayer` sharing a `GeoJsonSource` with a `CircleLayer` silently broke rendering for both on the test device's GPU (Imagination PowerVR). Route names/grades are still available by tapping a pin. See the comment in `MapScreen.kt`'s `addAreaLayer`.
 - Single park (Devils Lake) only — the data/tile pipeline is generic, but there's no in-app UI yet for managing multiple downloaded areas.
-- No automated tests yet.
+
+## Tests
+
+```
+python3 tools/test_openbeta_export.py   # walk/depth/is_leaf logic, plagiarism filter, retry-on-timeout, schema
+python3 tools/test_build_mbtiles.py     # bbox → tile-index math, MBTiles metadata
+./gradlew testDebugUnitTest             # Room/FTS search, via Robolectric — no device/emulator needed
+```
+
+All three run offline against fixture data — no live network calls, no Android device. There's no instrumented (`androidTest`) coverage of the map/UI itself yet; that needs a device or emulator, neither of which was available while building this.
 
 ## Building it yourself
 

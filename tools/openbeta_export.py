@@ -55,7 +55,7 @@ def query_openbeta(uuid: str, retries: int = 4) -> dict:
             if "errors" in body:
                 raise RuntimeError(f"GraphQL error for {uuid}: {body['errors']}")
             return body["data"]["area"]
-        except (urllib.error.HTTPError, urllib.error.URLError) as e:
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
             last_err = e
             wait = 2 ** attempt
             print(f"  (retrying {uuid} after {e}; sleeping {wait}s)")
@@ -82,6 +82,11 @@ def walk(uuid, parent_uuid, depth, rows_area, rows_climb, max_depth_seen):
     )
 
     for c in data["climbs"]:
+        description = (c.get("content") or {}).get("description") or None
+        # Skip descriptions OpenBeta itself has flagged as plagiarized (copied from
+        # Mountain Project without a license) — don't bundle disputed content offline.
+        if description and "plagiar" in description.lower():
+            description = None
         rows_climb.append(
             (
                 c["uuid"],
@@ -89,7 +94,7 @@ def walk(uuid, parent_uuid, depth, rows_area, rows_climb, max_depth_seen):
                 c["name"],
                 (c.get("grades") or {}).get("yds"),
                 climb_type(c["type"]),
-                (c.get("content") or {}).get("description") or None,
+                description,
                 lat,
                 lng,
             )
