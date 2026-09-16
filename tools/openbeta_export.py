@@ -30,6 +30,7 @@ query AreaTree($uuid: ID!) {
       grades { yds }
       type { trad sport bouldering tr aid mixed }
       content { description }
+      metadata { leftRightIndex }
     }
     children { uuid }
   }
@@ -95,6 +96,7 @@ def walk(uuid, parent_uuid, depth, rows_area, rows_climb, max_depth_seen):
                 (c.get("grades") or {}).get("yds"),
                 climb_type(c["type"]),
                 description,
+                (c.get("metadata") or {}).get("leftRightIndex"),
                 lat,
                 lng,
             )
@@ -133,14 +135,15 @@ def build_db(path, rows_area, rows_climb, max_depth):
         );
 
         CREATE TABLE climb (
-          uuid        TEXT NOT NULL,
-          area_uuid   TEXT NOT NULL,
-          name        TEXT NOT NULL,
-          yds_grade   TEXT,
-          climb_type  TEXT,
-          description TEXT,
-          lat         REAL,
-          lng         REAL,
+          uuid             TEXT NOT NULL,
+          area_uuid        TEXT NOT NULL,
+          name             TEXT NOT NULL,
+          yds_grade        TEXT,
+          climb_type       TEXT,
+          description      TEXT,
+          left_right_index INTEGER,
+          lat              REAL,
+          lng              REAL,
           PRIMARY KEY(uuid)
         );
 
@@ -158,7 +161,8 @@ def build_db(path, rows_area, rows_climb, max_depth):
         rows_area,
     )
     cur.executemany(
-        "INSERT INTO climb (uuid, area_uuid, name, yds_grade, climb_type, description, lat, lng) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO climb (uuid, area_uuid, name, yds_grade, climb_type, description, left_right_index, lat, lng) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
         rows_climb,
     )
     cur.executemany(

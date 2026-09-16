@@ -32,6 +32,9 @@ data class ClimbEntity(
     @ColumnInfo(name = "yds_grade") val ydsGrade: String?,
     @ColumnInfo(name = "climb_type") val climbType: String?,
     val description: String?,
+    // OpenBeta's canonical left-to-right ordering of routes on a wall — how
+    // climbers actually read a formation, not alphabetical by name.
+    @ColumnInfo(name = "left_right_index") val leftRightIndex: Int?,
     val lat: Double?,
     val lng: Double?
 )
@@ -50,6 +53,12 @@ interface AreaDao {
 
 @Dao
 interface ClimbDao {
-    @Query("SELECT * FROM climb WHERE area_uuid = :areaUuid ORDER BY name")
+    // Left-to-right wall order (how climbers actually read a formation), with
+    // any climb missing an index (shouldn't happen, but OpenBeta doesn't
+    // guarantee it) pushed to the end and sorted alphabetically among itself.
+    @Query(
+        "SELECT * FROM climb WHERE area_uuid = :areaUuid " +
+            "ORDER BY left_right_index IS NULL, left_right_index, name"
+    )
     suspend fun climbsInArea(areaUuid: String): List<ClimbEntity>
 }

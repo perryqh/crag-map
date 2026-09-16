@@ -56,16 +56,20 @@ class ClimbDaoTest {
             "INSERT INTO area (uuid, name, parent_uuid, depth, is_leaf, lat, lng, total_climbs) VALUES " +
                 "('bluff-1', 'East Bluff', NULL, 1, 0, 43.41, -89.71, 100)"
         )
+        // left_right_index deliberately reversed from alphabetical order (and one
+        // null) so a test can tell "sorted by wall position" apart from
+        // "sorted by name" and confirm nulls fall back to the end.
+        data class Fixture(val name: String, val grade: String, val type: String, val leftRightIndex: Int?)
         val climbs = listOf(
-            Triple("Vivesection", "5.11a", "trad"),
-            Triple("Scylla", "5.7", "trad"),
-            Triple("Angina", "5.9", "trad"),
+            Fixture("Vivesection", "5.11a", "trad", 1),
+            Fixture("Scylla", "5.7", "trad", 2),
+            Fixture("Angina", "5.9", "trad", null),
         )
-        for ((name, grade, type) in climbs) {
+        for (c in climbs) {
             writable.execSQL(
-                "INSERT INTO climb (uuid, area_uuid, name, yds_grade, climb_type, description, lat, lng) VALUES " +
-                    "(?, 'formation-1', ?, ?, ?, NULL, 43.41353, -89.7158)",
-                arrayOf<Any>(name, name, grade, type)
+                "INSERT INTO climb (uuid, area_uuid, name, yds_grade, climb_type, description, left_right_index, lat, lng) VALUES " +
+                    "(?, 'formation-1', ?, ?, ?, NULL, ?, 43.41353, -89.7158)",
+                arrayOf<Any?>(c.name, c.name, c.grade, c.type, c.leftRightIndex)
             )
         }
         writable.execSQL("INSERT INTO climb_fts(climb_fts) VALUES ('rebuild')")
@@ -85,9 +89,11 @@ class ClimbDaoTest {
     }
 
     @Test
-    fun `climbsInArea returns every climb under that formation, sorted by name`() = runBlocking {
+    fun `climbsInArea sorts by left-to-right wall position, nulls last`() = runBlocking {
         val climbs = db.climbDao().climbsInArea("formation-1")
-        assertEquals(listOf("Angina", "Scylla", "Vivesection"), climbs.map { it.name })
+        // Vivesection(1), Scylla(2), then Angina (no index) pushed to the end —
+        // the opposite of alphabetical order, proving it's not just sorting by name.
+        assertEquals(listOf("Vivesection", "Scylla", "Angina"), climbs.map { it.name })
     }
 
     @Test

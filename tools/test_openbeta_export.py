@@ -48,6 +48,10 @@ FIXTURE_TREE = {
                 "grades": {"yds": "5.9"},
                 "type": {"trad": True, "sport": False, "bouldering": False, "tr": False, "aid": False, "mixed": False},
                 "content": {"description": "A normal, non-infringing description."},
+                # Deliberately opposite of alphabetical order (Clean < Disputed) so
+                # a test can tell "sorted by name" and "sorted by left_right_index"
+                # apart.
+                "metadata": {"leftRightIndex": 5},
             },
             {
                 "uuid": "climb-plagiarized",
@@ -55,6 +59,7 @@ FIXTURE_TREE = {
                 "grades": {"yds": "5.10a"},
                 "type": {"trad": False, "sport": True, "bouldering": False, "tr": False, "aid": False, "mixed": False},
                 "content": {"description": "OpenBeta plagiarized this description from Mountain Project."},
+                "metadata": {"leftRightIndex": 1},
             },
         ],
         "children": [],
@@ -99,9 +104,10 @@ class WalkTests(unittest.TestCase):
 
     def test_climb_coordinates_are_inherited_from_the_parent_formation(self):
         for row in self.rows_climb:
-            # row layout: uuid, area_uuid, name, yds_grade, climb_type, description, lat, lng
-            self.assertEqual(row[6], 43.2)
-            self.assertEqual(row[7], -89.2)
+            # row layout: uuid, area_uuid, name, yds_grade, climb_type, description,
+            # left_right_index, lat, lng
+            self.assertEqual(row[7], 43.2)
+            self.assertEqual(row[8], -89.2)
 
     def test_plagiarized_description_is_dropped(self):
         by_uuid = {row[0]: row for row in self.rows_climb}
@@ -110,6 +116,11 @@ class WalkTests(unittest.TestCase):
     def test_clean_description_is_kept(self):
         by_uuid = {row[0]: row for row in self.rows_climb}
         self.assertEqual(by_uuid["climb-clean"][5], "A normal, non-infringing description.")
+
+    def test_left_right_index_is_captured(self):
+        by_uuid = {row[0]: row for row in self.rows_climb}
+        self.assertEqual(by_uuid["climb-clean"][6], 5)
+        self.assertEqual(by_uuid["climb-plagiarized"][6], 1)
 
 
 class QueryOpenbetaRetryTests(unittest.TestCase):
@@ -155,7 +166,7 @@ class ClimbTypeTests(unittest.TestCase):
 class BuildDbTests(unittest.TestCase):
     def test_schema_matches_room_expectations_and_fts_search_works(self):
         rows_area = [("a1", "Area One", None, 0, 0, 1.0, 2.0, 5)]
-        rows_climb = [("c1", "a1", "Vivesection", "5.11a", "trad", None, 1.0, 2.0)]
+        rows_climb = [("c1", "a1", "Vivesection", "5.11a", "trad", None, 11, 1.0, 2.0)]
         with tempfile.NamedTemporaryFile(suffix=".db") as f:
             export.build_db(f.name, rows_area, rows_climb, max_depth=0)
             conn = sqlite3.connect(f.name)
@@ -174,6 +185,10 @@ class BuildDbTests(unittest.TestCase):
             cur.execute("PRAGMA foreign_key_list(area)")
             self.assertEqual(cur.fetchall(), [], "no FKs — Room's bare entities don't declare any")
 
+            cur.execute("PRAGMA table_info(climb)")
+            climb_cols = {row[1] for row in cur.fetchall()}
+            self.assertIn("left_right_index", climb_cols)
+
             # The FTS prefix-search query the Android app runs at runtime.
             cur.execute(
                 "SELECT climb.name FROM climb_fts JOIN climb ON climb.rowid = climb_fts.rowid "
@@ -181,6 +196,24 @@ class BuildDbTests(unittest.TestCase):
                 ("vive*",),
             )
             self.assertEqual([row[0] for row in cur.fetchall()], ["Vivesection"])
+            conn.close()
+
+    def test_ordering_by_left_right_index_matches_the_android_apps_query(self):
+        rows_area = [("a1", "Area One", None, 0, 1, 1.0, 2.0, 3)]
+        # Inserted in a scrambled order to make sure the query does the sorting,
+        # not insertion order — and alphabetical-by-name would give a different
+        # (wrong) result here, matching the real Hawk's Nest data shape.
+        rows_climb = [
+            ("c-b", "a1", "Bravo", None, "trad", None, 10, 1.0, 2.0),
+            ("c-a", "a1", "Alpha", None, "trad", None, 0, 1.0, 2.0),
+            ("c-c", "a1", "Charlie", None, "trad", None, 5, 1.0, 2.0),
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            export.build_db(f.name, rows_area, rows_climb, max_depth=0)
+            conn = sqlite3.connect(f.name)
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM climb WHERE area_uuid = 'a1' ORDER BY left_right_index")
+            self.assertEqual([row[0] for row in cur.fetchall()], ["Alpha", "Charlie", "Bravo"])
             conn.close()
 
 

@@ -16,7 +16,14 @@ data class ClimbSearchResult(
     val lng: Double?
 )
 
-@Database(entities = [AreaEntity::class, ClimbEntity::class], version = 1, exportSchema = false)
+// Bump this version any time the bundled asset's schema changes (e.g. a new
+// column on an entity). Room's createFromAsset() only copies the asset into
+// the app's internal database on first install — on an existing install it
+// just opens whatever's already there, then throws on the identity-hash
+// mismatch this causes if the version wasn't also bumped. Since this whole
+// database is a read-only bundled snapshot (never user-written), destructive
+// migration — drop and recopy from the asset — is exactly the right recovery.
+@Database(entities = [AreaEntity::class, ClimbEntity::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun areaDao(): AreaDao
     abstract fun climbDao(): ClimbDao
@@ -67,6 +74,7 @@ abstract class AppDatabase : RoomDatabase() {
                     "devils_lake.db"
                 )
                     .createFromAsset("devils_lake.db")
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }

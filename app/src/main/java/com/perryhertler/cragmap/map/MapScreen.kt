@@ -6,9 +6,15 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -18,8 +24,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -64,6 +76,20 @@ private const val SUBAREA_MAX = 17.0
 private const val FORMATION_MIN = 17.0
 private const val FORMATION_MAX = 22.0
 
+// A label positioned in screen pixels (from MapLibreMap.projection), rendered as a
+// plain Compose overlay rather than a MapLibre SymbolLayer — see addAreaLayer's comment.
+// isFormation gates tap-to-open-bottom-sheet, matching what's tappable on the map itself
+// today (only formation pins; bluff/subarea/park pins aren't tappable yet either).
+private data class MapLabel(
+    val uuid: String,
+    val text: String,
+    val x: Int,
+    val y: Int,
+    val lat: Double,
+    val lng: Double,
+    val isFormation: Boolean
+)
+
 @Composable
 fun MapScreen() {
     val context = LocalContext.current
@@ -73,6 +99,11 @@ fun MapScreen() {
 
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
     var loadedStyle by remember { mutableStateOf<Style?>(null) }
+    var parkAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
+    var bluffAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
+    var subareaAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
+    var formationAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
+    var mapLabels by remember { mutableStateOf<List<MapLabel>>(emptyList()) }
     var sheetClimbs by remember { mutableStateOf<List<ClimbEntity>?>(null) }
     var sheetAreaName by remember { mutableStateOf("") }
     var highlightedClimbUuid by remember { mutableStateOf<String?>(null) }
@@ -97,6 +128,77 @@ fun MapScreen() {
         if (!locationPermissionGranted) {
             locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+    }
+
+    // Opens the bottom sheet + sets the map highlight for one formation — shared by
+    // both the map's own tap handler and tapping a formation's label, so the two
+    // stay identical (tapping a label is the same as tapping its dot).
+    fun selectFormation(uuid: String, name: String, lat: Double, lng: Double) {
+        loadedStyle?.let { setHighlight(it, lat, lng) }
+        scope.launch {
+            val climbs = withContext(Dispatchers.IO) { db.climbDao().climbsInArea(uuid) }
+            sheetClimbs = climbs
+            sheetAreaName = name
+            highlightedClimbUuid = null
+        }
+    }
+
+    val textMeasurer = rememberTextMeasurer()
+
+    // Text labels drawn as a plain Compose overlay, positioned via the map's own
+    // screen-projection — not a MapLibre SymbolLayer, which silently breaks
+    // rendering on this device's GPU (see addAreaLayer's comment). Recomputed
+    // whenever the camera settles (pan/zoom/animation), not on every frame of a
+    // gesture, to keep this cheap.
+    //
+    // Greedy overlap avoidance: candidates closest to the screen center are placed
+    // first, and any label whose measured bounding box would overlap an
+    // already-placed one is dropped rather than drawn on top of it illegibly —
+    // zooming in spreads pins out and reveals the ones that got hidden.
+    fun refreshLabels(map: MapLibreMap, mv: MapView) {
+        val zoom = map.cameraPosition.zoom
+        val (areas, showCount) = when {
+            zoom < BLUFF_MIN -> parkAreas to true
+            zoom < SUBAREA_MIN -> bluffAreas to false
+            zoom < FORMATION_MIN -> subareaAreas to false
+            else -> formationAreas to false
+        }
+        val isFormationBand = zoom >= FORMATION_MIN
+        val width = mv.width
+        val height = mv.height
+        val centerX = width / 2f
+        val centerY = height / 2f
+
+        data class Candidate(val area: AreaEntity, val text: String, val x: Int, val y: Int, val distSq: Float)
+
+        val candidates = areas.mapNotNull { area ->
+            val lat = area.lat ?: return@mapNotNull null
+            val lng = area.lng ?: return@mapNotNull null
+            val screenPt = map.projection.toScreenLocation(LatLng(lat, lng))
+            if (screenPt.x < -100 || screenPt.x > width + 100 || screenPt.y < -100 || screenPt.y > height + 100) {
+                return@mapNotNull null
+            }
+            val text = if (showCount) "${area.name} (${area.totalClimbs})" else area.name
+            val dx = screenPt.x - centerX
+            val dy = screenPt.y - centerY
+            Candidate(area, text, screenPt.x.toInt(), screenPt.y.toInt(), dx * dx + dy * dy)
+        }.sortedBy { it.distSq }
+
+        val placedBoxes = mutableListOf<IntArray>() // left, top, right, bottom
+        val result = mutableListOf<MapLabel>()
+        for (c in candidates) {
+            val measured = textMeasurer.measure(c.text, style = TextStyle(fontSize = 11.sp))
+            val left = c.x + 6
+            val top = c.y - 8
+            val right = left + measured.size.width + 6
+            val bottom = top + measured.size.height + 2
+            val overlaps = placedBoxes.any { box -> left < box[2] && right > box[0] && top < box[3] && bottom > box[1] }
+            if (!overlaps) {
+                placedBoxes += intArrayOf(left, top, right, bottom)
+                result += MapLabel(c.area.uuid, c.text, c.x, c.y, c.area.lat!!, c.area.lng!!, isFormationBand)
+            }
+        }
+        mapLabels = result
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -131,6 +233,10 @@ fun MapScreen() {
                         val subareas = withContext(Dispatchers.IO) { db.areaDao().areasAtDepth(2) }
                         val formations = withContext(Dispatchers.IO) { db.areaDao().leafAreas() }
                         Log.d("CragMap", "fetched park=${park.size} bluffs=${bluffs.size} subareas=${subareas.size} formations=${formations.size}")
+                        parkAreas = park
+                        bluffAreas = bluffs
+                        subareaAreas = subareas
+                        formationAreas = formations
 
                         val builder = buildBaseStyle(context)
                         addAreaLayer(builder, "park", park, "#0969da", PARK_MIN, PARK_MAX)
@@ -143,11 +249,14 @@ fun MapScreen() {
                             Log.d("CragMap", "style loaded, fully loaded=${style.isFullyLoaded}, layers=${style.layers.map { it.id }}")
                             loadedStyle = style
                             if (locationPermissionGranted) enableLocationComponent(context, map, style)
+                            refreshLabels(map, mv)
                         }
                     } catch (e: Exception) {
                         Log.e("CragMap", "area-layer setup failed", e)
                     }
                 }
+
+                map.addOnCameraIdleListener { refreshLabels(map, mv) }
 
                 map.addOnMapClickListener { latLng ->
                     val point = map.projection.toScreenLocation(latLng)
@@ -158,13 +267,7 @@ fun MapScreen() {
                         val name = feature.getStringProperty("name")
                         val geom = feature.geometry()
                         if (geom is Point) {
-                            loadedStyle?.let { setHighlight(it, geom.latitude(), geom.longitude()) }
-                        }
-                        scope.launch {
-                            val climbs = withContext(Dispatchers.IO) { db.climbDao().climbsInArea(uuid) }
-                            sheetClimbs = climbs
-                            sheetAreaName = name
-                            highlightedClimbUuid = null
+                            selectFormation(uuid, name, geom.latitude(), geom.longitude())
                         }
                         true
                     } else {
@@ -172,6 +275,24 @@ fun MapScreen() {
                     }
                 }
             }
+        }
+
+        mapLabels.forEach { label ->
+            var labelModifier = Modifier
+                .offset { IntOffset(label.x + 6, label.y - 8) }
+                .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(3.dp))
+            // Tapping a formation's label does the same thing as tapping its dot.
+            if (label.isFormation) {
+                labelModifier = labelModifier.clickable {
+                    selectFormation(label.uuid, label.text, label.lat, label.lng)
+                }
+            }
+            Text(
+                text = label.text,
+                fontSize = 11.sp,
+                color = Color(0xFF1F2328),
+                modifier = labelModifier.padding(horizontal = 3.dp, vertical = 1.dp)
+            )
         }
 
         SearchBar(
