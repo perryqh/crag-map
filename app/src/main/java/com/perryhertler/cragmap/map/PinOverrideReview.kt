@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
+import kotlin.math.roundToInt
 
 /**
  * Review-before-you-send step for Phase 3's field capture: a fat-fingered tap
@@ -75,12 +76,13 @@ fun PinOverrideReviewSheet(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(o.targetName, fontWeight = FontWeight.Medium)
                                 val stale = o.fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS
+                                val subtitle = buildString {
+                                    append(o.targetType)
+                                    o.headingDegrees?.let { append(" · ${it.roundToInt()}°") }
+                                    if (stale) append(" · fix was ${o.fixAgeMillis / 1000}s old — STALE")
+                                }
                                 Text(
-                                    text = if (stale) {
-                                        "${o.targetType} · fix was ${o.fixAgeMillis / 1000}s old — STALE"
-                                    } else {
-                                        o.targetType
-                                    },
+                                    text = subtitle,
                                     fontSize = 12.sp,
                                     color = if (stale) Color(0xFFB00020) else Color.Gray
                                 )

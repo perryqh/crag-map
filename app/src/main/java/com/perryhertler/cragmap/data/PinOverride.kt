@@ -38,7 +38,11 @@ data class PinOverrideEntity(
     // Age of the GPS fix itself at capture time, not how long ago the capture
     // happened — see STALE_FIX_THRESHOLD_MILLIS. Kept in the export so a
     // suspect pin is visible at the desk merge too, not just on the phone.
-    val fixAgeMillis: Long = 0
+    val fixAgeMillis: Long = 0,
+    // Compass heading (0-360, 0=north) the phone was facing at capture time —
+    // which way the wall was, for telling a formation's faces apart later.
+    // Null if no rotation sensor reading arrived in time (see readHeadingOnce).
+    val headingDegrees: Float? = null
 )
 
 @Dao
@@ -53,7 +57,7 @@ interface PinOverrideDao {
     suspend fun delete(targetUuid: String)
 }
 
-@Database(entities = [PinOverrideEntity::class], version = 2, exportSchema = false)
+@Database(entities = [PinOverrideEntity::class], version = 3, exportSchema = false)
 abstract class PinOverrideDatabase : RoomDatabase() {
     abstract fun pinOverrideDao(): PinOverrideDao
 
@@ -87,7 +91,8 @@ fun overridesToJson(overrides: List<PinOverrideEntity>): String {
             """"targetName":"${jsonEscape(o.targetName)}",""" +
             """"lat":${o.lat},"lng":${o.lng},""" +
             """"capturedAtMillis":${o.capturedAtMillis},""" +
-            """"fixAgeMillis":${o.fixAgeMillis}}"""
+            """"fixAgeMillis":${o.fixAgeMillis},""" +
+            """"headingDegrees":${o.headingDegrees ?: "null"}}"""
     }
     return "[$items]"
 }

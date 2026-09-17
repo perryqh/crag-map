@@ -5,11 +5,15 @@ replacing OpenBeta's rough centroids with coordinates surveyed on the ground
 
 The overrides file is the JSON exported from the app's Edit Mode (see
 PinOverride.kt's overridesToJson): a list of
-{targetUuid, targetType, targetName, lat, lng, capturedAtMillis, fixAgeMillis}
-objects, where targetType is "area" or "climb" and fixAgeMillis is how old
-the GPS fix was at the moment it was captured (the phone already warns on
-capture past STALE_FIX_THRESHOLD_MILLIS, but that's easy to miss mid-survey —
-this re-surfaces it at the desk too, before it's baked into the shipped db).
+{targetUuid, targetType, targetName, lat, lng, capturedAtMillis, fixAgeMillis,
+headingDegrees} objects, where targetType is "area" or "climb" and
+fixAgeMillis is how old the GPS fix was at the moment it was captured (the
+phone already warns on capture past STALE_FIX_THRESHOLD_MILLIS, but that's
+easy to miss mid-survey — this re-surfaces it at the desk too, before it's
+baked into the shipped db). headingDegrees (0-360, 0=north, or null if no
+sensor reading arrived in time) is the compass heading the phone was facing
+when the pin was set — informational only for now, not written into
+area/climb, since there's no wall-facing column in that schema yet.
 
 Run this after every openbeta_export.py rebuild — a fresh export has no
 knowledge of prior field surveys, so overrides must be reapplied each time.

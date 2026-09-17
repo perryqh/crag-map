@@ -67,6 +67,18 @@ class ApplyOverridesTests(unittest.TestCase):
         self.assertEqual(1, climb_count)
         self.assertEqual([], missing)
 
+    def test_headingDegrees_field_is_ignored_not_required(self):
+        # headingDegrees is informational only (see module docstring) — not a
+        # db column, so apply_overrides must not choke on its presence or
+        # absence.
+        conn = make_conn()
+        area_count, _, missing = apply_overrides(
+            conn,
+            [{"targetUuid": "a1", "targetType": "area", "lat": 1.0, "lng": 2.0, "headingDegrees": 182.5}],
+        )
+        self.assertEqual(1, area_count)
+        self.assertEqual([], missing)
+
 
 class FindStaleOverridesTests(unittest.TestCase):
     def test_fresh_fix_is_not_stale(self):

@@ -221,6 +221,10 @@ fun MapScreen() {
         val fixAgeMillis = (SystemClock.elapsedRealtime() - location.elapsedRealtimeNanos / 1_000_000)
             .coerceAtLeast(0)
         scope.launch {
+            // One-shot compass read alongside the GPS fix — which way the phone
+            // was facing toward the wall, for telling a formation's faces apart
+            // later. Null (not a fake value) if no sensor reading arrives in time.
+            val headingDegrees = readHeadingOnce(context)
             withContext(Dispatchers.IO) {
                 overrideDb.pinOverrideDao().upsert(
                     PinOverrideEntity(
@@ -230,7 +234,8 @@ fun MapScreen() {
                         lat = location.latitude,
                         lng = location.longitude,
                         capturedAtMillis = System.currentTimeMillis(),
-                        fixAgeMillis = fixAgeMillis
+                        fixAgeMillis = fixAgeMillis,
+                        headingDegrees = headingDegrees
                     )
                 )
             }
