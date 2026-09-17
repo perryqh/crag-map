@@ -118,6 +118,13 @@ private const val LEAF_MAX = 22.0
 
 private const val NEAR_ME_MAX_DISTANCE_M = 150.0
 
+/** Zoom used when flying the camera to a selected area. Leaf pins only
+ * appear in the LEAF band, so leaf targets need the higher zoom; everything
+ * else uses the intermediate band (same offsets as the area-search path). */
+fun zoomForSelectedArea(isLeaf: Int): Double =
+    if (isLeaf == 1) LEAF_MIN + 0.5 else INTERMEDIATE_MIN + 0.5
+
+
 // A label positioned in screen pixels (from MapLibreMap.projection), rendered as a
 // plain Compose overlay rather than a MapLibre SymbolLayer — see addAreaLayer's comment.
 // Every label is clickable now: tapping any area (leaf or not) does the same thing
@@ -242,14 +249,31 @@ fun MapScreen() {
         }
     }
 
+    // Shared camera fly used by selectArea, Near Me, search, and recenter so
+    // zoom/duration stay in one place.
+    fun flyTo(lat: Double, lng: Double, zoom: Double, durationMs: Int = 800) {
+        mapLibreMap?.easeCamera(
+            CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), zoom),
+            durationMs
+        )
+    }
+
     // Opens the sheet for one area — climbs if it's a formation, its children
-    // (in cliff order) if it's a disclosure node — and sets the map highlight.
-    // Shared by the map's own tap handler, tapping a label, search selection,
+    // (in cliff order) if it's a disclosure node — sets the map highlight, and
+    // flies the camera to the area when lat/lng are present. Shared by the
+    // map's own tap handler, tapping a label, search selection, Near Me,
     // prev/next, and tapping a child row in the sheet itself, so all of them
     // stay identical by construction.
-    fun selectArea(area: AreaEntity, highlightedClimbUuid: String? = null) {
+    fun selectArea(
+        area: AreaEntity,
+        highlightedClimbUuid: String? = null,
+        flyCamera: Boolean = true,
+    ) {
         if (area.lat != null && area.lng != null) {
             loadedStyle?.let { setHighlight(it, area.lat, area.lng) }
+            if (flyCamera) {
+                flyTo(area.lat, area.lng, zoomForSelectedArea(area.isLeaf))
+            }
         }
         scope.launch {
             try {
@@ -269,9 +293,7 @@ fun MapScreen() {
         val newIdx = idx + offset
         if (newIdx !in content.siblings.indices) return
         val target = content.siblings[newIdx]
-        if (target.lat != null && target.lng != null) {
-            mapLibreMap?.easeCamera(CameraUpdateFactory.newLatLng(LatLng(target.lat, target.lng)), 400)
-        }
+        // Camera fly lives in selectArea (with leaf/intermediate zoom).
         selectArea(target)
     }
 
@@ -601,16 +623,14 @@ fun MapScreen() {
                     is SearchResultItem.Climb -> {
                         val result = item.result
                         if (result.lat != null && result.lng != null) {
-                            map.easeCamera(
-                                CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), LEAF_MIN + 0.5),
-                                800
-                            )
+                            // Fly to the climb pin itself (may differ from its area centroid).
+                            flyTo(result.lat, result.lng, zoomForSelectedArea(isLeaf = 1))
                             loadedStyle?.let { setHighlight(it, result.lat, result.lng) }
                         }
                         scope.launch {
                             try {
                                 val area = withContext(Dispatchers.IO) { db.areaDao().getArea(result.areaUuid) }
-                                if (area != null) selectArea(area, highlightedClimbUuid = result.uuid)
+                                if (area != null) selectArea(area, highlightedClimbUuid = result.uuid, flyCamera = false)
                             } catch (e: Exception) {
                                 Log.e("CragMap", "failed to open sheet for search climb result", e)
                             }
@@ -618,10 +638,6 @@ fun MapScreen() {
                     }
                     is SearchResultItem.Area -> {
                         val result = item.result
-                        if (result.lat != null && result.lng != null) {
-                            val zoom = if (result.isLeaf == 1) LEAF_MIN + 0.5 else INTERMEDIATE_MIN + 0.5
-                            map.easeCamera(CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), zoom), 800)
-                        }
                         scope.launch {
                             try {
                                 val area = withContext(Dispatchers.IO) { db.areaDao().getArea(result.uuid) }
@@ -662,6 +678,8 @@ fun MapScreen() {
                 if (location == null) {
                     Toast.makeText(context, "Still waiting for a GPS fix…", Toast.LENGTH_SHORT).show()
                 } else {
+                    // Leaf layers only show at high zoom — recenter so yard pins appear.
+                    flyTo(location.latitude, location.longitude, zoomForSelectedArea(isLeaf = 1))
                     nearMeResults = rankNearbyFormations(
                         location.latitude,
                         location.longitude,
