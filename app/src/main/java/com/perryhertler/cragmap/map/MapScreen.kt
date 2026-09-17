@@ -347,7 +347,19 @@ fun MapScreen() {
         FloatingActionButton(
             onClick = {
                 val map = mapLibreMap
-                val location = map?.locationComponent?.lastKnownLocation
+                // locationComponent.lastKnownLocation throws
+                // LocationComponentNotInitializedException (not just null) if called
+                // before activateLocationComponent() has run, which only happens once
+                // the map's style finishes loading — a real race if this is tapped in
+                // the first moment after launch. Found and fixed on a branch that's
+                // since been closed; porting the fix here since the same latent bug
+                // exists in this button regardless of that branch's fate.
+                val locationComponent = map?.locationComponent
+                val location = if (locationComponent?.isLocationComponentActivated == true) {
+                    locationComponent.lastKnownLocation
+                } else {
+                    null
+                }
                 if (map != null && location != null) {
                     map.easeCamera(
                         CameraUpdateFactory.newLatLng(LatLng(location.latitude, location.longitude)),
