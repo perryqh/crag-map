@@ -1,0 +1,98 @@
+package com.perryhertler.cragmap.map
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.perryhertler.cragmap.data.PinOverrideEntity
+import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
+
+/**
+ * Review-before-you-send step for Phase 3's field capture: a fat-fingered tap
+ * on the wrong climb has no other way to be corrected in the field (the DB
+ * only supports upsert-by-target, not "remove this specific mistake"), so
+ * this is where that recovery happens, right before the JSON actually leaves
+ * the phone.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PinOverrideReviewSheet(
+    overrides: List<PinOverrideEntity>,
+    onDelete: (PinOverrideEntity) -> Unit,
+    onExport: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Captured pins (${overrides.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                TextButton(onClick = onExport, enabled = overrides.isNotEmpty()) {
+                    Text("Export")
+                }
+            }
+            Divider(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+            if (overrides.isEmpty()) {
+                Text(
+                    "No pins captured yet.",
+                    color = Color.Gray,
+                    modifier = Modifier.padding(vertical = 24.dp)
+                )
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(overrides, key = { it.targetUuid }) { o ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(o.targetName, fontWeight = FontWeight.Medium)
+                                val stale = o.fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS
+                                Text(
+                                    text = if (stale) {
+                                        "${o.targetType} · fix was ${o.fixAgeMillis / 1000}s old — STALE"
+                                    } else {
+                                        o.targetType
+                                    },
+                                    fontSize = 12.sp,
+                                    color = if (stale) Color(0xFFB00020) else Color.Gray
+                                )
+                            }
+                            IconButton(onClick = { onDelete(o) }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Delete pin for ${o.targetName}")
+                            }
+                        }
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+}

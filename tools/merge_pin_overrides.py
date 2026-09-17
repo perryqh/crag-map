@@ -5,8 +5,11 @@ replacing OpenBeta's rough centroids with coordinates surveyed on the ground
 
 The overrides file is the JSON exported from the app's Edit Mode (see
 PinOverride.kt's overridesToJson): a list of
-{targetUuid, targetType, targetName, lat, lng, capturedAtMillis} objects,
-where targetType is "area" or "climb".
+{targetUuid, targetType, targetName, lat, lng, capturedAtMillis, fixAgeMillis}
+objects, where targetType is "area" or "climb" and fixAgeMillis is how old
+the GPS fix was at the moment it was captured (the phone already warns on
+capture past STALE_FIX_THRESHOLD_MILLIS, but that's easy to miss mid-survey —
+this re-surfaces it at the desk too, before it's baked into the shipped db).
 
 Run this after every openbeta_export.py rebuild — a fresh export has no
 knowledge of prior field surveys, so overrides must be reapplied each time.
@@ -18,10 +21,17 @@ import json
 import sqlite3
 import sys
 
+STALE_FIX_THRESHOLD_MILLIS = 20_000
+
 
 def load_overrides(path):
     with open(path) as f:
         return json.load(f)
+
+
+def find_stale_overrides(overrides, threshold_millis=STALE_FIX_THRESHOLD_MILLIS):
+    """Overrides whose captured GPS fix was already old when taken."""
+    return [o for o in overrides if o.get("fixAgeMillis", 0) > threshold_millis]
 
 
 def apply_overrides(conn, overrides):
@@ -58,6 +68,15 @@ def main():
     db_path, overrides_path = sys.argv[1], sys.argv[2]
 
     overrides = load_overrides(overrides_path)
+
+    stale = find_stale_overrides(overrides)
+    if stale:
+        print(f"NOTE: {len(stale)} override(s) were captured from a GPS fix that was already stale:")
+        for o in stale:
+            age_s = o.get("fixAgeMillis", 0) / 1000
+            print(f"  {o.get('targetName', o['targetUuid'])} ({o['targetType']}) — fix was {age_s:.0f}s old")
+        print("  Consider re-checking these against the field notes before trusting them.\n")
+
     conn = sqlite3.connect(db_path)
     try:
         area_count, climb_count, missing = apply_overrides(conn, overrides)

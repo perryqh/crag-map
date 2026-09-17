@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
 
-from merge_pin_overrides import apply_overrides
+from merge_pin_overrides import apply_overrides, find_stale_overrides
 
 
 def make_conn():
@@ -66,6 +66,26 @@ class ApplyOverridesTests(unittest.TestCase):
         self.assertEqual(1, area_count)
         self.assertEqual(1, climb_count)
         self.assertEqual([], missing)
+
+
+class FindStaleOverridesTests(unittest.TestCase):
+    def test_fresh_fix_is_not_stale(self):
+        self.assertEqual([], find_stale_overrides([{"targetUuid": "a1", "fixAgeMillis": 500}]))
+
+    def test_old_fix_is_flagged(self):
+        overrides = [{"targetUuid": "a1", "fixAgeMillis": 45000}]
+        self.assertEqual(overrides, find_stale_overrides(overrides))
+
+    def test_missing_fixAgeMillis_defaults_to_fresh(self):
+        self.assertEqual([], find_stale_overrides([{"targetUuid": "a1"}]))
+
+    def test_exactly_at_threshold_is_not_stale(self):
+        overrides = [{"targetUuid": "a1", "fixAgeMillis": 20000}]
+        self.assertEqual([], find_stale_overrides(overrides))
+
+    def test_custom_threshold(self):
+        overrides = [{"targetUuid": "a1", "fixAgeMillis": 6000}]
+        self.assertEqual(overrides, find_stale_overrides(overrides, threshold_millis=5000))
 
 
 if __name__ == "__main__":

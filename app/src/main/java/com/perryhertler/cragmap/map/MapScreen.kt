@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -54,6 +55,7 @@ import com.perryhertler.cragmap.data.AreaEntity
 import com.perryhertler.cragmap.data.ClimbEntity
 import com.perryhertler.cragmap.data.PinOverrideDatabase
 import com.perryhertler.cragmap.data.PinOverrideEntity
+import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
 import com.perryhertler.cragmap.data.overridesToJson
 import com.perryhertler.cragmap.search.SearchBar
 import com.perryhertler.cragmap.search.SearchResultItem
@@ -136,6 +138,7 @@ fun MapScreen() {
     // feature aimed at typical users.
     var editModeEnabled by remember { mutableStateOf(false) }
     var overrideCount by remember { mutableStateOf(0) }
+    var overridesForReview by remember { mutableStateOf<List<PinOverrideEntity>?>(null) }
     LaunchedEffect(Unit) {
         overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
     }
@@ -212,6 +215,11 @@ fun MapScreen() {
             Toast.makeText(context, "Still waiting for a GPS fix…", Toast.LENGTH_SHORT).show()
             return
         }
+        // Under cliff/canopy the location engine's last reading can be stale by
+        // minutes — elapsedRealtimeNanos (monotonic, unaffected by clock changes)
+        // says how old the FIX itself is, not how long ago this function ran.
+        val fixAgeMillis = (SystemClock.elapsedRealtime() - location.elapsedRealtimeNanos / 1_000_000)
+            .coerceAtLeast(0)
         scope.launch {
             withContext(Dispatchers.IO) {
                 overrideDb.pinOverrideDao().upsert(
@@ -221,12 +229,35 @@ fun MapScreen() {
                         targetName = targetName,
                         lat = location.latitude,
                         lng = location.longitude,
-                        capturedAtMillis = System.currentTimeMillis()
+                        capturedAtMillis = System.currentTimeMillis(),
+                        fixAgeMillis = fixAgeMillis
                     )
                 )
             }
             overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
-            Toast.makeText(context, "Captured pin for $targetName", Toast.LENGTH_SHORT).show()
+            if (fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS) {
+                Toast.makeText(
+                    context,
+                    "Captured pin for $targetName (GPS fix is ${fixAgeMillis / 1000}s old — may be stale)",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                Toast.makeText(context, "Captured pin for $targetName", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun openOverrideReview() {
+        scope.launch {
+            overridesForReview = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all() }
+        }
+    }
+
+    fun deleteOverride(o: PinOverrideEntity) {
+        scope.launch {
+            withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().delete(o.targetUuid) }
+            overridesForReview = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all() }
+            overrideCount = overridesForReview?.size ?: 0
         }
     }
 
@@ -558,7 +589,16 @@ fun MapScreen() {
                 overrideCount = overrideCount,
                 onCaptureAreaPin = { capturePin(content.area.uuid, "area", content.area.name) },
                 onCaptureClimbPin = { climb: ClimbEntity -> capturePin(climb.uuid, "climb", climb.name) },
-                onExportOverrides = { exportOverrides() }
+                onOpenOverrideReview = { openOverrideReview() }
+            )
+        }
+
+        overridesForReview?.let { overrides ->
+            PinOverrideReviewSheet(
+                overrides = overrides,
+                onDelete = { o -> deleteOverride(o) },
+                onExport = { exportOverrides() },
+                onDismiss = { overridesForReview = null }
             )
         }
     }

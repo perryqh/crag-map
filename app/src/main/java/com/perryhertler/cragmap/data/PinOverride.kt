@@ -12,6 +12,14 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
+ * A fix older than this when "set pin" is tapped is flagged rather than
+ * trusted silently — under cliff/canopy the location engine's last reading
+ * can be stale by minutes, and a stale fix captured as if fresh would only
+ * surface as a wrong pin during the desk merge, far from the rock to re-check.
+ */
+const val STALE_FIX_THRESHOLD_MILLIS = 20_000L
+
+/**
  * A field-captured GPS pin for one area or climb, taken with the app's Edit
  * Mode (Phase 3: East Rampart baseline pack) to replace OpenBeta's rough
  * centroid with a real on-the-ground reading. Lives in its own writable
@@ -26,7 +34,11 @@ data class PinOverrideEntity(
     val targetName: String,
     val lat: Double,
     val lng: Double,
-    val capturedAtMillis: Long
+    val capturedAtMillis: Long,
+    // Age of the GPS fix itself at capture time, not how long ago the capture
+    // happened — see STALE_FIX_THRESHOLD_MILLIS. Kept in the export so a
+    // suspect pin is visible at the desk merge too, not just on the phone.
+    val fixAgeMillis: Long = 0
 )
 
 @Dao
@@ -36,9 +48,12 @@ interface PinOverrideDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: PinOverrideEntity)
+
+    @Query("DELETE FROM pin_override WHERE targetUuid = :targetUuid")
+    suspend fun delete(targetUuid: String)
 }
 
-@Database(entities = [PinOverrideEntity::class], version = 1, exportSchema = false)
+@Database(entities = [PinOverrideEntity::class], version = 2, exportSchema = false)
 abstract class PinOverrideDatabase : RoomDatabase() {
     abstract fun pinOverrideDao(): PinOverrideDao
 
@@ -52,6 +67,7 @@ abstract class PinOverrideDatabase : RoomDatabase() {
                     PinOverrideDatabase::class.java,
                     "pin_overrides.db"
                 )
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }
@@ -70,7 +86,8 @@ fun overridesToJson(overrides: List<PinOverrideEntity>): String {
             """"targetType":"${jsonEscape(o.targetType)}",""" +
             """"targetName":"${jsonEscape(o.targetName)}",""" +
             """"lat":${o.lat},"lng":${o.lng},""" +
-            """"capturedAtMillis":${o.capturedAtMillis}}"""
+            """"capturedAtMillis":${o.capturedAtMillis},""" +
+            """"fixAgeMillis":${o.fixAgeMillis}}"""
     }
     return "[$items]"
 }

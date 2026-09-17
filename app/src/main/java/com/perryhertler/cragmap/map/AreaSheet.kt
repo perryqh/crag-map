@@ -72,7 +72,7 @@ fun AreaSheet(
     overrideCount: Int = 0,
     onCaptureAreaPin: () -> Unit = {},
     onCaptureClimbPin: (ClimbEntity) -> Unit = {},
-    onExportOverrides: () -> Unit = {}
+    onOpenOverrideReview: () -> Unit = {}
 ) {
     val sheetState = rememberModalBottomSheetState()
     val siblingIndex = content.siblings.indexOfFirst { it.uuid == content.area.uuid }
@@ -132,8 +132,8 @@ fun AreaSheet(
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF9A5B00)
                             )
-                            TextButton(onClick = onExportOverrides, enabled = overrideCount > 0) {
-                                Text("Export ($overrideCount)", fontSize = 12.sp)
+                            TextButton(onClick = onOpenOverrideReview, enabled = overrideCount > 0) {
+                                Text("Review ($overrideCount)", fontSize = 12.sp)
                             }
                         }
                         TextButton(onClick = onCaptureAreaPin, modifier = Modifier.padding(top = 2.dp)) {
