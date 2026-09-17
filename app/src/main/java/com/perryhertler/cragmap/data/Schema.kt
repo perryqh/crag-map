@@ -39,16 +39,47 @@ data class ClimbEntity(
     val lng: Double?
 )
 
+/** name/parentName-only projection for area search — not a full AreaEntity row. */
+data class AreaSearchResult(
+    val uuid: String,
+    val name: String,
+    val parentName: String?,
+    val lat: Double?,
+    val lng: Double?,
+    @ColumnInfo(name = "is_leaf") val isLeaf: Int
+)
+
 @Dao
 interface AreaDao {
     @Query("SELECT * FROM area WHERE depth = :depth")
     suspend fun areasAtDepth(depth: Int): List<AreaEntity>
 
+    // Every non-leaf area from depth 2 down, regardless of how much deeper the
+    // tree goes past that (Devils Lake's real tree runs to depth 6 in places).
+    // Areas at depth >= 3 used to have no pin at any zoom level at all — this
+    // folds them into the same disclosure tier as depth-2 subareas instead of
+    // only handling exactly 3 hardcoded levels.
+    @Query("SELECT * FROM area WHERE depth >= 2 AND is_leaf = 0")
+    suspend fun intermediateAreas(): List<AreaEntity>
+
     @Query("SELECT * FROM area WHERE is_leaf = 1")
     suspend fun leafAreas(): List<AreaEntity>
 
+    @Query("SELECT * FROM area WHERE uuid = :uuid")
+    suspend fun getArea(uuid: String): AreaEntity?
+
+    @Query("SELECT * FROM area WHERE parent_uuid = :parentUuid")
+    suspend fun childrenOf(parentUuid: String): List<AreaEntity>
+
     @Query("SELECT MAX(depth) FROM area")
     suspend fun maxDepth(): Int
+
+    @Query(
+        "SELECT a.uuid AS uuid, a.name AS name, p.name AS parentName, a.lat AS lat, a.lng AS lng, a.is_leaf AS is_leaf " +
+            "FROM area a LEFT JOIN area p ON a.parent_uuid = p.uuid " +
+            "WHERE a.name LIKE '%' || :term || '%' ORDER BY a.name LIMIT 20"
+    )
+    suspend fun searchByName(term: String): List<AreaSearchResult>
 }
 
 @Dao

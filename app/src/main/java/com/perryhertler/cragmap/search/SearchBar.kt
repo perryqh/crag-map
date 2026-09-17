@@ -16,32 +16,47 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.perryhertler.cragmap.data.AppDatabase
+import com.perryhertler.cragmap.data.AreaSearchResult
 import com.perryhertler.cragmap.data.ClimbSearchResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** Either a climb (name/grade FTS) or an area/formation (plain name match). */
+sealed class SearchResultItem {
+    data class Climb(val result: ClimbSearchResult) : SearchResultItem()
+    data class Area(val result: AreaSearchResult) : SearchResultItem()
+}
+
 /**
- * Offline FTS search over the bundled climb_fts table (see AppDatabase.searchClimbs).
- * Selecting a result is the direct fix for "how do I get from one area to the
- * next" — it jumps the camera straight to that route's formation instead of
- * requiring breadcrumb navigation through the area hierarchy.
+ * Offline search over both the climb_fts table and area names. Climb-name
+ * search alone wasn't enough — you couldn't search "East Rampart" or "Hawk's
+ * Nest" by name, only the routes on them, which is exactly the "search that
+ * matches how climbers think" gap from the plan this came out of.
  */
 @Composable
 fun SearchBar(
     modifier: Modifier = Modifier,
     db: AppDatabase,
-    onResultSelected: (ClimbSearchResult) -> Unit
+    onResultSelected: (SearchResultItem) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<ClimbSearchResult>>(emptyList()) }
+    var results by remember { mutableStateOf<List<SearchResultItem>>(emptyList()) }
 
     LaunchedEffect(query) {
         results = if (query.isBlank()) {
             emptyList()
         } else {
-            withContext(Dispatchers.IO) { db.searchClimbs(query) }
+            withContext(Dispatchers.IO) {
+                val climbs = db.searchClimbs(query).map { SearchResultItem.Climb(it) }
+                val areas = db.areaDao().searchByName(query).map { SearchResultItem.Area(it) }
+                // Areas first — searching "East Rampart" should land you on the
+                // area itself, not buried under every climb whose name happens
+                // to contain those letters.
+                areas + climbs
+            }
         }
     }
 
@@ -49,7 +64,7 @@ fun SearchBar(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Search routes or grades…") },
+            placeholder = { Text("Search routes, walls, or grades…") },
             singleLine = true,
             modifier = Modifier.background(MaterialTheme.colorScheme.surface)
         )
@@ -59,17 +74,27 @@ fun SearchBar(
                     .background(MaterialTheme.colorScheme.surface)
                     .padding(top = 4.dp)
             ) {
-                items(results) { result ->
-                    Text(
-                        text = "${result.name}  ·  ${result.ydsGrade ?: "?"}",
+                items(results) { item ->
+                    val (primary, secondary) = when (item) {
+                        is SearchResultItem.Climb ->
+                            item.result.name to (item.result.ydsGrade ?: "?")
+                        is SearchResultItem.Area ->
+                            item.result.name to (item.result.parentName ?: "")
+                    }
+                    Column(
                         modifier = Modifier
                             .clickable {
-                                onResultSelected(result)
+                                onResultSelected(item)
                                 query = ""
                                 results = emptyList()
                             }
                             .padding(12.dp)
-                    )
+                    ) {
+                        Text(primary)
+                        if (secondary.isNotBlank()) {
+                            Text(secondary, color = Color.Gray)
+                        }
+                    }
                 }
             }
         }

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -45,8 +46,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.perryhertler.cragmap.CragMapApplication
 import com.perryhertler.cragmap.data.AppDatabase
 import com.perryhertler.cragmap.data.AreaEntity
-import com.perryhertler.cragmap.data.ClimbEntity
 import com.perryhertler.cragmap.search.SearchBar
+import com.perryhertler.cragmap.search.SearchResultItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,29 +80,29 @@ private const val INITIAL_ZOOM = 13.5
 // see the "should the area be top-centered" discussion this came out of.
 private const val BOTTOM_SHEET_PADDING_FRACTION = 0.55f
 
-// Zoom bands from the blueprint's zoom-tiered UI table.
+// Zoom bands. "Intermediate" covers every non-leaf area from depth 2 down —
+// not just a hardcoded depth-2 "subarea" — since Devils Lake's real tree
+// runs to depth 6 in places and anything past depth 2 used to have no pin at
+// any zoom level at all. Leaf areas (is_leaf=1) always get the closest band,
+// regardless of which depth they actually sit at — some formations are
+// direct depth-1 children (e.g. the bouldering area), others are 3-4 levels
+// deep, and both need to be tappable to see their climbs.
 private const val PARK_MIN = 0.0
 private const val PARK_MAX = 13.0
 private const val BLUFF_MIN = 13.0
 private const val BLUFF_MAX = 15.0
-private const val SUBAREA_MIN = 15.0
-private const val SUBAREA_MAX = 17.0
-private const val FORMATION_MIN = 17.0
-private const val FORMATION_MAX = 22.0
+private const val INTERMEDIATE_MIN = 15.0
+private const val INTERMEDIATE_MAX = 17.0
+private const val LEAF_MIN = 17.0
+private const val LEAF_MAX = 22.0
+
+private const val NEAR_ME_MAX_DISTANCE_M = 150.0
 
 // A label positioned in screen pixels (from MapLibreMap.projection), rendered as a
 // plain Compose overlay rather than a MapLibre SymbolLayer — see addAreaLayer's comment.
-// isFormation gates tap-to-open-bottom-sheet, matching what's tappable on the map itself
-// today (only formation pins; bluff/subarea/park pins aren't tappable yet either).
-private data class MapLabel(
-    val uuid: String,
-    val text: String,
-    val x: Int,
-    val y: Int,
-    val lat: Double,
-    val lng: Double,
-    val isFormation: Boolean
-)
+// Every label is clickable now: tapping any area (leaf or not) does the same thing
+// tapping its dot does — open a climb list or a child-area list.
+private data class MapLabel(val area: AreaEntity, val text: String, val x: Int, val y: Int)
 
 @Composable
 fun MapScreen() {
@@ -114,12 +115,11 @@ fun MapScreen() {
     var loadedStyle by remember { mutableStateOf<Style?>(null) }
     var parkAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
     var bluffAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
-    var subareaAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
-    var formationAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
+    var intermediateAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
+    var leafAreas by remember { mutableStateOf<List<AreaEntity>>(emptyList()) }
     var mapLabels by remember { mutableStateOf<List<MapLabel>>(emptyList()) }
-    var sheetClimbs by remember { mutableStateOf<List<ClimbEntity>?>(null) }
-    var sheetAreaName by remember { mutableStateOf("") }
-    var highlightedClimbUuid by remember { mutableStateOf<String?>(null) }
+    var sheetContent by remember { mutableStateOf<SheetContent?>(null) }
+    var nearMeResults by remember { mutableStateOf<List<NearbyFormation>?>(null) }
     var locationPermissionGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -143,17 +143,37 @@ fun MapScreen() {
         }
     }
 
-    // Opens the bottom sheet + sets the map highlight for one formation — shared by
-    // both the map's own tap handler and tapping a formation's label, so the two
-    // stay identical (tapping a label is the same as tapping its dot).
-    fun selectFormation(uuid: String, name: String, lat: Double, lng: Double) {
-        loadedStyle?.let { setHighlight(it, lat, lng) }
-        scope.launch {
-            val climbs = withContext(Dispatchers.IO) { db.climbDao().climbsInArea(uuid) }
-            sheetClimbs = climbs
-            sheetAreaName = name
-            highlightedClimbUuid = null
+    // Opens the sheet for one area — climbs if it's a formation, its children
+    // (in cliff order) if it's a disclosure node — and sets the map highlight.
+    // Shared by the map's own tap handler, tapping a label, search selection,
+    // prev/next, and tapping a child row in the sheet itself, so all of them
+    // stay identical by construction.
+    fun selectArea(area: AreaEntity, highlightedClimbUuid: String? = null) {
+        if (area.lat != null && area.lng != null) {
+            loadedStyle?.let { setHighlight(it, area.lat, area.lng) }
         }
+        scope.launch {
+            try {
+                sheetContent = withContext(Dispatchers.IO) {
+                    buildSheetContent(db, area, highlightedClimbUuid)
+                }
+            } catch (e: Exception) {
+                Log.e("CragMap", "failed to build sheet content for ${area.uuid}", e)
+            }
+        }
+    }
+
+    fun navigateSibling(offset: Int) {
+        val content = sheetContent ?: return
+        val idx = content.siblings.indexOfFirst { it.uuid == content.area.uuid }
+        if (idx < 0) return
+        val newIdx = idx + offset
+        if (newIdx !in content.siblings.indices) return
+        val target = content.siblings[newIdx]
+        if (target.lat != null && target.lng != null) {
+            mapLibreMap?.easeCamera(CameraUpdateFactory.newLatLng(LatLng(target.lat, target.lng)), 400)
+        }
+        selectArea(target)
     }
 
     val textMeasurer = rememberTextMeasurer()
@@ -172,11 +192,10 @@ fun MapScreen() {
         val zoom = map.cameraPosition.zoom
         val (areas, showCount) = when {
             zoom < BLUFF_MIN -> parkAreas to true
-            zoom < SUBAREA_MIN -> bluffAreas to false
-            zoom < FORMATION_MIN -> subareaAreas to false
-            else -> formationAreas to false
+            zoom < INTERMEDIATE_MIN -> bluffAreas to false
+            zoom < LEAF_MIN -> intermediateAreas to false
+            else -> leafAreas to false
         }
-        val isFormationBand = zoom >= FORMATION_MIN
         val width = mv.width
         val height = mv.height
         val centerX = width / 2f
@@ -208,7 +227,7 @@ fun MapScreen() {
             val overlaps = placedBoxes.any { box -> left < box[2] && right > box[0] && top < box[3] && bottom > box[1] }
             if (!overlaps) {
                 placedBoxes += intArrayOf(left, top, right, bottom)
-                result += MapLabel(c.area.uuid, c.text, c.x, c.y, c.area.lat!!, c.area.lng!!, isFormationBand)
+                result += MapLabel(c.area, c.text, c.x, c.y)
             }
         }
         mapLabels = result
@@ -220,12 +239,13 @@ fun MapScreen() {
             modifier = Modifier.fillMaxSize()
         ) { mv ->
             // AndroidView's update lambda re-runs on every recomposition of MapScreen
-            // (e.g. whenever sheetClimbs changes, which happens on every pin tap / search
-            // selection). Without this guard, each recomposition called getMapAsync again,
-            // which called setStyle again, which replaced the whole style — wiping every
-            // pin layer just added and snapping the camera back to the default position.
-            // Real one-time init belongs in `factory`, but getMapAsync is easiest to keep
-            // here guarded by "have we already done this."
+            // (e.g. whenever sheetContent changes, which happens on every pin tap /
+            // search selection). Without this guard, each recomposition called
+            // getMapAsync again, which called setStyle again, which replaced the
+            // whole style — wiping every pin layer just added and snapping the
+            // camera back to the default position. Real one-time init belongs in
+            // `factory`, but getMapAsync is easiest to keep here guarded by "have
+            // we already done this."
             if (mapLibreMap == null) mv.getMapAsync { map ->
                 Log.d("CragMap", "getMapAsync fired, map=$map")
                 mapLibreMap = map
@@ -243,19 +263,22 @@ fun MapScreen() {
                     try {
                         val park = withContext(Dispatchers.IO) { db.areaDao().areasAtDepth(0) }
                         val bluffs = withContext(Dispatchers.IO) { db.areaDao().areasAtDepth(1) }
-                        val subareas = withContext(Dispatchers.IO) { db.areaDao().areasAtDepth(2) }
-                        val formations = withContext(Dispatchers.IO) { db.areaDao().leafAreas() }
-                        Log.d("CragMap", "fetched park=${park.size} bluffs=${bluffs.size} subareas=${subareas.size} formations=${formations.size}")
+                        val intermediate = withContext(Dispatchers.IO) { db.areaDao().intermediateAreas() }
+                        val leaves = withContext(Dispatchers.IO) { db.areaDao().leafAreas() }
+                        Log.d(
+                            "CragMap",
+                            "fetched park=${park.size} bluffs=${bluffs.size} intermediate=${intermediate.size} leaves=${leaves.size}"
+                        )
                         parkAreas = park
                         bluffAreas = bluffs
-                        subareaAreas = subareas
-                        formationAreas = formations
+                        intermediateAreas = intermediate
+                        leafAreas = leaves
 
                         val builder = buildBaseStyle(context)
                         addAreaLayer(builder, "park", park, "#0969da", PARK_MIN, PARK_MAX)
                         addAreaLayer(builder, "bluff", bluffs, "#0969da", BLUFF_MIN, BLUFF_MAX)
-                        addAreaLayer(builder, "subarea", subareas, "#7c3aed", SUBAREA_MIN, SUBAREA_MAX)
-                        addAreaLayer(builder, "formation", formations, "#cf222e", FORMATION_MIN, FORMATION_MAX)
+                        addAreaLayer(builder, "intermediate", intermediate, "#7c3aed", INTERMEDIATE_MIN, INTERMEDIATE_MAX)
+                        addAreaLayer(builder, "leaf", leaves, "#cf222e", LEAF_MIN, LEAF_MAX)
                         addHighlightLayer(builder)
 
                         map.setStyle(builder) { style ->
@@ -273,14 +296,15 @@ fun MapScreen() {
 
                 map.addOnMapClickListener { latLng ->
                     val point = map.projection.toScreenLocation(latLng)
-                    val features = map.queryRenderedFeatures(point, "formation-circle")
+                    val features = map.queryRenderedFeatures(
+                        point, "park-circle", "bluff-circle", "intermediate-circle", "leaf-circle"
+                    )
                     val feature = features.firstOrNull()
                     if (feature != null) {
                         val uuid = feature.getStringProperty("uuid")
-                        val name = feature.getStringProperty("name")
-                        val geom = feature.geometry()
-                        if (geom is Point) {
-                            selectFormation(uuid, name, geom.latitude(), geom.longitude())
+                        scope.launch {
+                            val area = withContext(Dispatchers.IO) { db.areaDao().getArea(uuid) }
+                            if (area != null) selectArea(area)
                         }
                         true
                     } else {
@@ -291,55 +315,98 @@ fun MapScreen() {
         }
 
         mapLabels.forEach { label ->
-            var labelModifier = Modifier
-                .offset { IntOffset(label.x + 6, label.y - 8) }
-                .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(3.dp))
-            // Tapping a formation's label does the same thing as tapping its dot.
-            if (label.isFormation) {
-                labelModifier = labelModifier.clickable {
-                    selectFormation(label.uuid, label.text, label.lat, label.lng)
-                }
-            }
             Text(
                 text = label.text,
                 fontSize = 11.sp,
                 color = Color(0xFF1F2328),
-                modifier = labelModifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                modifier = Modifier
+                    .offset { IntOffset(label.x + 6, label.y - 8) }
+                    .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(3.dp))
+                    .clickable { selectArea(label.area) }
+                    .padding(horizontal = 3.dp, vertical = 1.dp)
             )
         }
 
         SearchBar(
             modifier = Modifier.fillMaxWidth(),
             db = db,
-            onResultSelected = { result ->
-                Log.d("CragMap", "search result selected: $result, mapLibreMap=$mapLibreMap")
+            onResultSelected = { item ->
                 val map = mapLibreMap
                 if (map == null) {
                     Log.w("CragMap", "onResultSelected: mapLibreMap was null, skipping camera move")
-                } else if (result.lat != null && result.lng != null) {
-                    val bottomPadding = (mapView.height * BOTTOM_SHEET_PADDING_FRACTION).toInt()
-                    map.setPadding(0, 0, 0, bottomPadding)
-                    map.easeCamera(
-                        CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), FORMATION_MIN + 0.5),
-                        800
-                    )
-                    loadedStyle?.let { setHighlight(it, result.lat, result.lng) }
-                } else {
-                    Log.w("CragMap", "onResultSelected: result had null lat/lng")
+                    return@SearchBar
                 }
-                scope.launch {
-                    try {
-                        val climbs = withContext(Dispatchers.IO) { db.climbDao().climbsInArea(result.areaUuid) }
-                        Log.d("CragMap", "climbsInArea(${result.areaUuid}) -> ${climbs.size} climbs")
-                        sheetClimbs = climbs
-                        sheetAreaName = "" // area name not needed for the highlighted case
-                        highlightedClimbUuid = result.uuid
-                    } catch (e: Exception) {
-                        Log.e("CragMap", "failed to load climbs for bottom sheet", e)
+                val bottomPadding = (mapView.height * BOTTOM_SHEET_PADDING_FRACTION).toInt()
+                map.setPadding(0, 0, 0, bottomPadding)
+
+                when (item) {
+                    is SearchResultItem.Climb -> {
+                        val result = item.result
+                        if (result.lat != null && result.lng != null) {
+                            map.easeCamera(
+                                CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), LEAF_MIN + 0.5),
+                                800
+                            )
+                            loadedStyle?.let { setHighlight(it, result.lat, result.lng) }
+                        }
+                        scope.launch {
+                            try {
+                                val area = withContext(Dispatchers.IO) { db.areaDao().getArea(result.areaUuid) }
+                                if (area != null) selectArea(area, highlightedClimbUuid = result.uuid)
+                            } catch (e: Exception) {
+                                Log.e("CragMap", "failed to open sheet for search climb result", e)
+                            }
+                        }
+                    }
+                    is SearchResultItem.Area -> {
+                        val result = item.result
+                        if (result.lat != null && result.lng != null) {
+                            val zoom = if (result.isLeaf == 1) LEAF_MIN + 0.5 else INTERMEDIATE_MIN + 0.5
+                            map.easeCamera(CameraUpdateFactory.newLatLngZoom(LatLng(result.lat, result.lng), zoom), 800)
+                        }
+                        scope.launch {
+                            try {
+                                val area = withContext(Dispatchers.IO) { db.areaDao().getArea(result.uuid) }
+                                if (area != null) selectArea(area)
+                            } catch (e: Exception) {
+                                Log.e("CragMap", "failed to open sheet for search area result", e)
+                            }
+                        }
                     }
                 }
             }
         )
+
+        // "Near me": one on-demand GPS fix (not continuous polling — see the
+        // closed corridor-survey branch this replaces), ranking formations by
+        // straight-line distance within a short radius. Deliberately just a
+        // shortlist, never a claim about the exact route — see NearMe.kt.
+        FloatingActionButton(
+            onClick = {
+                val map = mapLibreMap
+                val locationComponent = map?.locationComponent
+                val location = if (locationComponent?.isLocationComponentActivated == true) {
+                    locationComponent.lastKnownLocation
+                } else {
+                    null
+                }
+                if (location == null) {
+                    Toast.makeText(context, "Still waiting for a GPS fix…", Toast.LENGTH_SHORT).show()
+                } else {
+                    nearMeResults = rankNearbyFormations(
+                        location.latitude,
+                        location.longitude,
+                        leafAreas,
+                        maxDistanceM = NEAR_ME_MAX_DISTANCE_M
+                    )
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Filled.NearMe, contentDescription = "What's near me")
+        }
 
         // "Recenter on my location" — the location dot shows where you are, but
         // there was previously no way to actually jump the camera there. GPS
@@ -351,9 +418,7 @@ fun MapScreen() {
                 // LocationComponentNotInitializedException (not just null) if called
                 // before activateLocationComponent() has run, which only happens once
                 // the map's style finishes loading — a real race if this is tapped in
-                // the first moment after launch. Found and fixed on a branch that's
-                // since been closed; porting the fix here since the same latent bug
-                // exists in this button regardless of that branch's fate.
+                // the first moment after launch.
                 val locationComponent = map?.locationComponent
                 val location = if (locationComponent?.isLocationComponentActivated == true) {
                     locationComponent.lastKnownLocation
@@ -376,14 +441,24 @@ fun MapScreen() {
             Icon(Icons.Filled.MyLocation, contentDescription = "Recenter on my location")
         }
 
-        val climbs = sheetClimbs
-        if (climbs != null) {
-            ClimbBottomSheet(
-                areaName = sheetAreaName,
-                climbs = climbs,
-                highlightedClimbUuid = highlightedClimbUuid,
+        nearMeResults?.let { results ->
+            NearMePanel(
+                results = results,
+                onSelect = { nearby -> selectArea(nearby.area) },
+                onDismiss = { nearMeResults = null },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 80.dp)
+            )
+        }
+
+        sheetContent?.let { content ->
+            AreaSheet(
+                content = content,
+                onSelectArea = { area -> selectArea(area) },
+                onNavigateSibling = { offset -> navigateSibling(offset) },
                 onDismiss = {
-                    sheetClimbs = null
+                    sheetContent = null
                     loadedStyle?.let { clearHighlight(it) }
                     mapLibreMap?.setPadding(0, 0, 0, 0)
                 }
@@ -400,7 +475,7 @@ private fun addHighlightLayer(style: Style.Builder) {
     val source = GeoJsonSource(HIGHLIGHT_SOURCE_ID, FeatureCollection.fromJson(EMPTY_FEATURE_COLLECTION_JSON))
     style.withSource(source)
     // Distinct ring around whichever pin is currently selected (search result or tapped
-    // formation). No zoom restriction — it should stay visible whatever zoom the user's at.
+    // area). No zoom restriction — it should stay visible whatever zoom the user's at.
     // A plain CircleLayer, same as the (working) area pins — no SymbolLayer involved.
     val highlightLayer = CircleLayer(HIGHLIGHT_LAYER_ID, HIGHLIGHT_SOURCE_ID).withProperties(
         PropertyFactory.circleRadius(16f),
@@ -476,7 +551,7 @@ private fun addAreaLayer(
     // rendered correctly the instant the sibling SymbolLayer was removed). This looks like
     // a MapLibre Native text/glyph rendering bug on this GPU, not an app bug — see the
     // similar PowerVR/Vulkan rendering reports at https://github.com/maplibre/maplibre-compose/issues/1370.
-    // Labels are available via tapping a pin (bottom sheet) instead, for now.
+    // Labels are a separate Compose overlay instead (see MapLabel/refreshLabels above).
 }
 
 private fun areasToFeatureCollectionJson(areas: List<AreaEntity>): String {
