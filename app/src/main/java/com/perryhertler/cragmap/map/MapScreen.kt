@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -14,6 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -23,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -334,6 +340,29 @@ fun MapScreen() {
                 }
             }
         )
+
+        // "Recenter on my location" — the location dot shows where you are, but
+        // there was previously no way to actually jump the camera there. GPS
+        // works via satellites, so this functions with zero cell signal.
+        FloatingActionButton(
+            onClick = {
+                val map = mapLibreMap
+                val location = map?.locationComponent?.lastKnownLocation
+                if (map != null && location != null) {
+                    map.easeCamera(
+                        CameraUpdateFactory.newLatLng(LatLng(location.latitude, location.longitude)),
+                        800
+                    )
+                } else {
+                    Toast.makeText(context, "Still waiting for a GPS fix…", Toast.LENGTH_SHORT).show()
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Filled.MyLocation, contentDescription = "Recenter on my location")
+        }
 
         val climbs = sheetClimbs
         if (climbs != null) {

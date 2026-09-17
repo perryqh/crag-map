@@ -5,8 +5,10 @@ into a standard MBTiles (SQLite) file for offline use in the Crag Map app.
 Usage:
     python3 build_mbtiles.py <south> <west> <north> <east> <minzoom> <maxzoom> <output.mbtiles>
 
-Example (Devil's Lake climbing area, zoom 13-16 for the spike):
-    python3 build_mbtiles.py 43.405 -89.735 43.428 -89.700 13 16 devils_lake.mbtiles
+Example (Devil's Lake — covers every bluff, derived from
+MIN/MAX(lat/lng) across the exported area table plus a small buffer;
+the original spike's box was eyeballed and missed West Bluff entirely):
+    python3 build_mbtiles.py 43.385 -89.765 43.440 -89.655 13 16 devils_lake.mbtiles
 """
 import math
 import sqlite3

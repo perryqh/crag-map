@@ -25,35 +25,37 @@ class Deg2NumTests(unittest.TestCase):
         self.assertLess(y0, y1)
 
     def test_devils_lake_falls_in_the_expected_tile_at_zoom_13(self):
-        # Regression check against the real bounding box used for the spike
-        # (43.405,-89.735 to 43.428,-89.700) — the park center should land
-        # inside the tile range actually fetched, not off by a row/column.
+        # Regression check against the real bounding box covering every bluff
+        # (43.385,-89.765 to 43.440,-89.655, derived from MIN/MAX(lat/lng)
+        # across the exported area table — the original spike's box was
+        # eyeballed and missed West Bluff entirely) — the park center should
+        # land inside the tile range actually fetched, not off by a row/column.
         x, y = tiles.deg2num(43.41655, -89.72343, 13)
-        bbox_tiles = set(tiles.tiles_in_bbox(43.405, -89.735, 43.428, -89.700, 13))
+        bbox_tiles = set(tiles.tiles_in_bbox(43.385, -89.765, 43.440, -89.655, 13))
         self.assertIn((x, y), bbox_tiles)
 
 
 class TilesInBboxTests(unittest.TestCase):
     def test_returns_a_rectangular_grid(self):
-        result = list(tiles.tiles_in_bbox(43.405, -89.735, 43.428, -89.700, 14))
+        result = list(tiles.tiles_in_bbox(43.385, -89.765, 43.440, -89.655, 14))
         xs = {x for x, _ in result}
         ys = {y for _, y in result}
         self.assertEqual(len(result), len(xs) * len(ys), "should be a full x*y grid, no gaps")
 
     def test_tiny_bbox_at_low_zoom_still_returns_at_least_one_tile(self):
-        result = list(tiles.tiles_in_bbox(43.405, -89.735, 43.428, -89.700, 1))
+        result = list(tiles.tiles_in_bbox(43.385, -89.765, 43.440, -89.655, 1))
         self.assertGreaterEqual(len(result), 1)
 
     def test_tile_count_grows_with_zoom(self):
-        low = list(tiles.tiles_in_bbox(43.405, -89.735, 43.428, -89.700, 10))
-        high = list(tiles.tiles_in_bbox(43.405, -89.735, 43.428, -89.700, 15))
+        low = list(tiles.tiles_in_bbox(43.385, -89.765, 43.440, -89.655, 10))
+        high = list(tiles.tiles_in_bbox(43.385, -89.765, 43.440, -89.655, 15))
         self.assertLess(len(low), len(high))
 
 
 class MbtilesMetadataTests(unittest.TestCase):
     def test_init_mbtiles_writes_expected_metadata_and_schema(self):
         with tempfile.NamedTemporaryFile(suffix=".mbtiles") as f:
-            conn = tiles.init_mbtiles(f.name, (43.405, -89.735, 43.428, -89.700), 13, 16)
+            conn = tiles.init_mbtiles(f.name, (43.385, -89.765, 43.440, -89.655), 13, 16)
             conn.close()
 
             check = sqlite3.connect(f.name)
@@ -62,7 +64,7 @@ class MbtilesMetadataTests(unittest.TestCase):
             self.assertEqual(meta["format"], "jpg")  # USGSTopo serves JPEG, not PNG
             self.assertEqual(meta["minzoom"], "13")
             self.assertEqual(meta["maxzoom"], "16")
-            self.assertEqual(meta["bounds"], "-89.735,43.405,-89.7,43.428")
+            self.assertEqual(meta["bounds"], "-89.765,43.385,-89.655,43.44")
 
             cur.execute("PRAGMA index_list(tiles)")
             index_names = [row[1] for row in cur.fetchall()]
