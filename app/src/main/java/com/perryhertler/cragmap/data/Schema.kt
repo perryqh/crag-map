@@ -47,6 +47,9 @@ interface AreaDao {
     @Query("SELECT * FROM area WHERE is_leaf = 1")
     suspend fun leafAreas(): List<AreaEntity>
 
+    @Query("SELECT * FROM area")
+    suspend fun allAreas(): List<AreaEntity>
+
     @Query("SELECT MAX(depth) FROM area")
     suspend fun maxDepth(): Int
 }
@@ -61,4 +64,23 @@ interface ClimbDao {
             "ORDER BY left_right_index IS NULL, left_right_index, name"
     )
     suspend fun climbsInArea(areaUuid: String): List<ClimbEntity>
+}
+
+
+/** Cliff LineString derived offline from sibling area coordinates (tools/build_cliff_corridors.py). */
+@Entity(tableName = "cliff_corridor")
+data class CliffCorridorEntity(
+    @PrimaryKey @ColumnInfo(name = "parent_uuid") val parentUuid: String,
+    val name: String,
+    val geojson: String,
+    @ColumnInfo(name = "child_uuids_json") val childUuidsJson: String
+)
+
+@Dao
+interface CliffCorridorDao {
+    @Query("SELECT * FROM cliff_corridor")
+    suspend fun getAll(): List<CliffCorridorEntity>
+
+    @Query("SELECT * FROM cliff_corridor WHERE parent_uuid = :parentUuid")
+    suspend fun get(parentUuid: String): CliffCorridorEntity?
 }

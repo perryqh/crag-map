@@ -196,6 +196,15 @@ class BuildDbTests(unittest.TestCase):
                 ("vive*",),
             )
             self.assertEqual([row[0] for row in cur.fetchall()], ["Vivesection"])
+
+            # build_db optionally enriches with cliff_corridor (0 rows when no
+            # parent has ≥2 geo-tagged children — still creates the table).
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='cliff_corridor'"
+            )
+            self.assertEqual(cur.fetchone()[0], "cliff_corridor")
+            cur.execute("SELECT value FROM pack_meta WHERE key='cliff_corridor_count'")
+            self.assertEqual(cur.fetchone()[0], "0")
             conn.close()
 
     def test_ordering_by_left_right_index_matches_the_android_apps_query(self):

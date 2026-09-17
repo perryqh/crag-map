@@ -3,6 +3,14 @@ package com.perryhertler.cragmap.map
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -46,8 +54,13 @@ import com.perryhertler.cragmap.CragMapApplication
 import com.perryhertler.cragmap.data.AppDatabase
 import com.perryhertler.cragmap.data.AreaEntity
 import com.perryhertler.cragmap.data.ClimbEntity
+import com.perryhertler.cragmap.orientation.CliffOrientation
+import com.perryhertler.cragmap.orientation.Corridor
+import com.perryhertler.cragmap.orientation.RankedFormation
 import com.perryhertler.cragmap.search.SearchBar
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -126,6 +139,12 @@ fun MapScreen() {
                 PackageManager.PERMISSION_GRANTED
         )
     }
+    var corridors by remember { mutableStateOf<List<Corridor>>(emptyList()) }
+    var areasByUuid by remember { mutableStateOf<Map<String, Triple<String, Double, Double>>>(emptyMap()) }
+    var lastLatLng by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var lastHeadingDeg by remember { mutableStateOf<Float?>(null) }
+    var underMeRanked by remember { mutableStateOf<List<RankedFormation>>(emptyList()) }
+    var underMeEmpty by remember { mutableStateOf<String?>("Waiting for GPS…") }
 
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -140,6 +159,108 @@ fun MapScreen() {
     LaunchedEffect(Unit) {
         if (!locationPermissionGranted) {
             locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
+    // GPS + compass for "Under me". Prefer MapLibre's last fix when present;
+    // otherwise LocationManager + rotation vector / orientation sensor.
+    DisposableEffect(locationPermissionGranted) {
+        if (!locationPermissionGranted) {
+            underMeEmpty = "Location permission needed"
+            onDispose { }
+        } else {
+            val locMgr = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val sensorMgr = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+            val locListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    lastLatLng = location.latitude to location.longitude
+                    if (location.hasBearing()) lastHeadingDeg = location.bearing
+                }
+                @Deprecated("Deprecated in API")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {}
+            }
+            try {
+                // GPS only — no NETWORK_PROVIDER (keeps us offline / no INTERNET).
+                locMgr.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, locListener)
+            } catch (_: SecurityException) { }
+            try {
+                locMgr.getLastKnownLocation(LocationManager.GPS_PROVIDER)?.let {
+                    lastLatLng = it.latitude to it.longitude
+                }
+            } catch (_: SecurityException) { }
+
+            val rotation = sensorMgr.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+            @Suppress("DEPRECATION")
+            val orientation = sensorMgr.getDefaultSensor(Sensor.TYPE_ORIENTATION)
+            val sensorListener = object : SensorEventListener {
+                private val rotationMatrix = FloatArray(9)
+                private val orientationAngles = FloatArray(3)
+                override fun onSensorChanged(event: SensorEvent) {
+                    if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                        SensorManager.getOrientation(rotationMatrix, orientationAngles)
+                        var deg = Math.toDegrees(orientationAngles[0].toDouble()).toFloat()
+                        if (deg < 0) deg += 360f
+                        lastHeadingDeg = deg
+                    } else if (event.sensor.type == Sensor.TYPE_ORIENTATION) {
+                        var deg = event.values[0]
+                        if (deg < 0) deg += 360f
+                        lastHeadingDeg = deg
+                    }
+                }
+                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+            }
+            if (rotation != null) {
+                sensorMgr.registerListener(sensorListener, rotation, SensorManager.SENSOR_DELAY_UI)
+            } else if (orientation != null) {
+                @Suppress("DEPRECATION")
+                sensorMgr.registerListener(sensorListener, orientation, SensorManager.SENSOR_DELAY_UI)
+            }
+            onDispose {
+                try { locMgr.removeUpdates(locListener) } catch (_: Exception) {}
+                sensorMgr.unregisterListener(sensorListener)
+            }
+        }
+    }
+
+    // Throttle corridor ranking to ~1 Hz.
+    LaunchedEffect(locationPermissionGranted, corridors, areasByUuid) {
+        if (!locationPermissionGranted) {
+            underMeRanked = emptyList()
+            underMeEmpty = "Location permission needed"
+            return@LaunchedEffect
+        }
+        while (isActive) {
+            val mapLoc = mapLibreMap?.locationComponent?.lastKnownLocation
+            if (mapLoc != null) {
+                lastLatLng = mapLoc.latitude to mapLoc.longitude
+                if (mapLoc.hasBearing()) lastHeadingDeg = mapLoc.bearing
+            }
+            val fix = lastLatLng
+            if (fix == null) {
+                underMeRanked = emptyList()
+                underMeEmpty = "Waiting for GPS…"
+            } else if (corridors.isEmpty()) {
+                underMeRanked = emptyList()
+                underMeEmpty = "No cliff corridors in pack"
+            } else {
+                val ranked = withContext(Dispatchers.Default) {
+                    CliffOrientation.rankFormations(
+                        lat = fix.first,
+                        lng = fix.second,
+                        headingDeg = lastHeadingDeg,
+                        corridors = corridors,
+                        areasByUuid = areasByUuid,
+                        maxResults = 3,
+                        maxDistanceM = 120.0
+                    )
+                }
+                underMeRanked = ranked
+                underMeEmpty = if (ranked.isEmpty()) "Nothing within 120 m" else null
+            }
+            delay(1000L)
         }
     }
 
@@ -245,11 +366,19 @@ fun MapScreen() {
                         val bluffs = withContext(Dispatchers.IO) { db.areaDao().areasAtDepth(1) }
                         val subareas = withContext(Dispatchers.IO) { db.areaDao().areasAtDepth(2) }
                         val formations = withContext(Dispatchers.IO) { db.areaDao().leafAreas() }
-                        Log.d("CragMap", "fetched park=${park.size} bluffs=${bluffs.size} subareas=${subareas.size} formations=${formations.size}")
+                        val allAreas = withContext(Dispatchers.IO) { db.areaDao().allAreas() }
+                        val corridorEntities = withContext(Dispatchers.IO) { db.cliffCorridorDao().getAll() }
+                        Log.d("CragMap", "fetched park=${park.size} bluffs=${bluffs.size} subareas=${subareas.size} formations=${formations.size} corridors=${corridorEntities.size}")
                         parkAreas = park
                         bluffAreas = bluffs
                         subareaAreas = subareas
                         formationAreas = formations
+                        corridors = corridorEntities.mapNotNull { it.toCorridor() }
+                        areasByUuid = allAreas.mapNotNull { a ->
+                            val la = a.lat
+                            val ln = a.lng
+                            if (la != null && ln != null) a.uuid to Triple(a.name, la, ln) else null
+                        }.toMap()
 
                         val builder = buildBaseStyle(context)
                         addAreaLayer(builder, "park", park, "#0969da", PARK_MIN, PARK_MAX)
@@ -339,6 +468,17 @@ fun MapScreen() {
                     }
                 }
             }
+        )
+
+        UnderMeCard(
+            ranked = underMeRanked,
+            emptyMessage = underMeEmpty,
+            onSelect = { formation ->
+                selectFormation(formation.uuid, formation.name, formation.lat, formation.lng)
+            },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 16.dp, bottom = 88.dp, end = 88.dp)
         )
 
         // "Recenter on my location" — the location dot shows where you are, but

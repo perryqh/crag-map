@@ -117,6 +117,7 @@ def build_db(path, rows_area, rows_climb, max_depth):
     cur = conn.cursor()
     cur.executescript(
         """
+        DROP TABLE IF EXISTS cliff_corridor;
         DROP TABLE IF EXISTS area;
         DROP TABLE IF EXISTS climb;
         DROP TABLE IF EXISTS climb_fts;
@@ -175,6 +176,14 @@ def build_db(path, rows_area, rows_climb, max_depth):
     cur.execute("INSERT INTO pack_meta (key, value) VALUES ('root_uuid', ?)", (rows_area[0][0],))
     conn.commit()
     conn.close()
+    # Offline enrichment: cliff LineStrings from sibling area coordinates.
+    # Imported lazily so this module stays usable even if the helper is absent
+    # in older checkouts; existing export unit tests still pass.
+    try:
+        from build_cliff_corridors import build_cliff_corridors
+        build_cliff_corridors(path)
+    except ImportError:
+        pass
 
 
 def main():

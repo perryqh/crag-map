@@ -18,16 +18,20 @@ Crag Map instead renders every climb as a pin on a single pannable, zoomable top
 
 Working spike, verified on-device: pins render at every zoom band, tapping a formation opens its route list, search jumps the camera and highlights the selected route, and the current-location dot works via MapLibre's built-in location engine.
 
+**Under me v0**: an on-map card shortlists up to three nearby *formations* from GPS + heading by projecting onto `cliff_corridor` LineStrings (sibling area coordinates packed offline into `cliff_corridor` by `tools/build_cliff_corridors.py`). Climbs share their parent formation's lat/lng, so ranking never uses nearest climb pins. Per-climb identification along a wall (via `left_right_index`) is still future work.
+
 Known limitations:
 - No on-map text labels — a `SymbolLayer` sharing a `GeoJsonSource` with a `CircleLayer` silently broke rendering for both on the test device's GPU (Imagination PowerVR). Route names/grades are still available by tapping a pin. See the comment in `MapScreen.kt`'s `addAreaLayer`.
 - Single park (Devils Lake) only — the data/tile pipeline is generic, but there's no in-app UI yet for managing multiple downloaded areas.
+- Under me is formation-level only — picking the exact route under you from `left_right_index` is not implemented yet.
 
 ## Tests
 
 ```
-python3 tools/test_openbeta_export.py   # walk/depth/is_leaf logic, plagiarism filter, retry-on-timeout, schema
-python3 tools/test_build_mbtiles.py     # bbox → tile-index math, MBTiles metadata
-./gradlew testDebugUnitTest             # Room/FTS search, via Robolectric — no device/emulator needed
+python3 tools/test_openbeta_export.py        # walk/depth/is_leaf logic, plagiarism filter, retry-on-timeout, schema
+python3 tools/test_build_cliff_corridors.py  # E-W / N-S corridor ordering, skip parents with <2 geo children
+python3 tools/test_build_mbtiles.py          # bbox → tile-index math, MBTiles metadata
+./gradlew testDebugUnitTest                  # Room/FTS search + CliffOrientation pure JVM tests
 ```
 
 All three run offline against fixture data — no live network calls, no Android device. There's no instrumented (`androidTest`) coverage of the map/UI itself yet; that needs a device or emulator, neither of which was available while building this.
@@ -43,6 +47,8 @@ To regenerate the bundled data/tiles for a different area:
 
 ```
 python3 tools/openbeta_export.py <openbeta-area-uuid> app/src/main/assets/<pack>.db
+# (export also runs build_cliff_corridors; or refresh corridors alone:)
+python3 tools/build_cliff_corridors.py app/src/main/assets/<pack>.db
 python3 tools/build_mbtiles.py <sw-lat> <sw-lng> <ne-lat> <ne-lng> <min-zoom> <max-zoom> app/src/main/assets/<pack>.mbtiles
 ```
 
