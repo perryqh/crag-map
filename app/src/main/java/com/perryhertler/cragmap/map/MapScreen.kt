@@ -2,6 +2,7 @@ package com.perryhertler.cragmap.map
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
 import android.widget.Toast
@@ -10,16 +11,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EditLocationAlt
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,11 +47,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.core.content.FileProvider
 import com.perryhertler.cragmap.CragMapApplication
 import com.perryhertler.cragmap.data.AppDatabase
 import com.perryhertler.cragmap.data.AreaEntity
+import com.perryhertler.cragmap.data.ClimbEntity
+import com.perryhertler.cragmap.data.PinOverrideDatabase
+import com.perryhertler.cragmap.data.PinOverrideEntity
+import com.perryhertler.cragmap.data.overridesToJson
 import com.perryhertler.cragmap.search.SearchBar
 import com.perryhertler.cragmap.search.SearchResultItem
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -109,6 +119,7 @@ fun MapScreen() {
     val context = LocalContext.current
     val mapView = rememberMapViewWithLifecycle()
     val db = remember { AppDatabase.getInstance(context) }
+    val overrideDb = remember { PinOverrideDatabase.getInstance(context) }
     val scope = rememberCoroutineScope()
 
     var mapLibreMap by remember { mutableStateOf<MapLibreMap?>(null) }
@@ -120,6 +131,14 @@ fun MapScreen() {
     var mapLabels by remember { mutableStateOf<List<MapLabel>>(emptyList()) }
     var sheetContent by remember { mutableStateOf<SheetContent?>(null) }
     var nearMeResults by remember { mutableStateOf<List<NearbyFormation>?>(null) }
+    // Phase 3 field-survey mode (see PinOverride.kt). Off by default and not
+    // persisted across launches — a personal on-the-ground tool, not a
+    // feature aimed at typical users.
+    var editModeEnabled by remember { mutableStateOf(false) }
+    var overrideCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
+    }
     var locationPermissionGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -174,6 +193,67 @@ fun MapScreen() {
             mapLibreMap?.easeCamera(CameraUpdateFactory.newLatLng(LatLng(target.lat, target.lng)), 400)
         }
         selectArea(target)
+    }
+
+    // Takes one on-demand GPS fix (same single-shot pattern as Near Me and the
+    // recenter FAB — never a loop) and stores it as a field-survey override for
+    // Phase 3. Deliberately doesn't touch the live map/sheet: this is a capture
+    // tool, not a live editor — the override only takes effect once exported
+    // and merged into the next devils_lake.db rebuild via
+    // tools/merge_pin_overrides.py.
+    fun capturePin(targetUuid: String, targetType: String, targetName: String) {
+        val locationComponent = mapLibreMap?.locationComponent
+        val location = if (locationComponent?.isLocationComponentActivated == true) {
+            locationComponent.lastKnownLocation
+        } else {
+            null
+        }
+        if (location == null) {
+            Toast.makeText(context, "Still waiting for a GPS fix…", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                overrideDb.pinOverrideDao().upsert(
+                    PinOverrideEntity(
+                        targetUuid = targetUuid,
+                        targetType = targetType,
+                        targetName = targetName,
+                        lat = location.latitude,
+                        lng = location.longitude,
+                        capturedAtMillis = System.currentTimeMillis()
+                    )
+                )
+            }
+            overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
+            Toast.makeText(context, "Captured pin for $targetName", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun exportOverrides() {
+        scope.launch {
+            try {
+                val overrides = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all() }
+                if (overrides.isEmpty()) {
+                    Toast.makeText(context, "No captured pins to export yet", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                val file = withContext(Dispatchers.IO) {
+                    val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+                    File(dir, "pin_overrides.json").apply { writeText(overridesToJson(overrides)) }
+                }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Export pin overrides"))
+            } catch (e: Exception) {
+                Log.e("CragMap", "failed to export pin overrides", e)
+                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     val textMeasurer = rememberTextMeasurer()
@@ -327,8 +407,9 @@ fun MapScreen() {
             )
         }
 
+        Row(modifier = Modifier.fillMaxWidth().align(Alignment.TopStart)) {
         SearchBar(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.weight(1f),
             db = db,
             onResultSelected = { item ->
                 val map = mapLibreMap
@@ -376,6 +457,17 @@ fun MapScreen() {
                 }
             }
         )
+        IconButton(
+            onClick = { editModeEnabled = !editModeEnabled },
+            modifier = Modifier.padding(top = 12.dp, end = 4.dp)
+        ) {
+            Icon(
+                Icons.Filled.EditLocationAlt,
+                contentDescription = "Toggle field-survey edit mode",
+                tint = if (editModeEnabled) Color(0xFFCF6600) else Color.Gray
+            )
+        }
+        }
 
         // "Near me": one on-demand GPS fix (not continuous polling — see the
         // closed corridor-survey branch this replaces), ranking formations by
@@ -461,7 +553,12 @@ fun MapScreen() {
                     sheetContent = null
                     loadedStyle?.let { clearHighlight(it) }
                     mapLibreMap?.setPadding(0, 0, 0, 0)
-                }
+                },
+                editModeEnabled = editModeEnabled,
+                overrideCount = overrideCount,
+                onCaptureAreaPin = { capturePin(content.area.uuid, "area", content.area.name) },
+                onCaptureClimbPin = { climb: ClimbEntity -> capturePin(climb.uuid, "climb", climb.name) },
+                onExportOverrides = { exportOverrides() }
             )
         }
     }
