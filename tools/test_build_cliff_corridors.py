@@ -106,6 +106,35 @@ class BuildCliffCorridorsTests(unittest.TestCase):
             self.assertEqual(json.loads(child_uuids_json), ["c-south", "c-mid", "c-north"])
             conn.close()
 
+    def test_schema_matches_room_expectations(self):
+        # Regression check: parent_uuid was declared "TEXT PRIMARY KEY" without
+        # an explicit NOT NULL — SQLite only implies NOT NULL for INTEGER
+        # PRIMARY KEY (rowid aliases), not TEXT ones — so the bundled asset's
+        # notnull flag was 0 while Room's CliffCorridorEntity (a non-null
+        # Kotlin String @PrimaryKey) expects 1. Room's strict pre-packaged
+        # schema check rejected the whole database over this exact mismatch,
+        # which took the entire map down with it (the same bug class as the
+        # area/climb tables hit earlier in this project).
+        areas = [
+            ("p-ew", "EW Wall", None, 0, 0, 43.0, -89.5, 3),
+            ("c-west", "West Pin", "p-ew", 1, 1, 43.00, -89.60, 1),
+            ("c-east", "East Pin", "p-ew", 1, 1, 43.00, -89.40, 1),
+        ]
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            _make_pack_db(f.name, areas)
+            bcc.build_cliff_corridors(f.name)
+            conn = sqlite3.connect(f.name)
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(cliff_corridor)")
+            cols = {row[1]: row[3] for row in cur.fetchall()}  # name -> notnull
+            self.assertEqual(cols["parent_uuid"], 1)
+            self.assertEqual(cols["name"], 1)
+            self.assertEqual(cols["geojson"], 1)
+            self.assertEqual(cols["child_uuids_json"], 1)
+            cur.execute("PRAGMA foreign_key_list(cliff_corridor)")
+            self.assertEqual(cur.fetchall(), [], "no FKs — Room's bare entity doesn't declare any")
+            conn.close()
+
     def test_parent_with_one_child_is_skipped(self):
         areas = [
             ("p1", "Lonely Parent", None, 0, 0, 43.0, -89.0, 1),

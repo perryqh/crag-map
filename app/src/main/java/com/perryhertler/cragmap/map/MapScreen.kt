@@ -233,7 +233,19 @@ fun MapScreen() {
             return@LaunchedEffect
         }
         while (isActive) {
-            val mapLoc = mapLibreMap?.locationComponent?.lastKnownLocation
+            // locationComponent.lastKnownLocation throws
+            // LocationComponentNotInitializedException (not just null) if called
+            // before activateLocationComponent() has run — which happens later,
+            // gated on the map's style finishing loading. This loop starts as
+            // soon as locationPermissionGranted flips true, well before that,
+            // so it must check activation itself rather than relying on a
+            // null-safe call to save it.
+            val locationComponent = mapLibreMap?.locationComponent
+            val mapLoc = if (locationComponent?.isLocationComponentActivated == true) {
+                locationComponent.lastKnownLocation
+            } else {
+                null
+            }
             if (mapLoc != null) {
                 lastLatLng = mapLoc.latitude to mapLoc.longitude
                 if (mapLoc.hasBearing()) lastHeadingDeg = mapLoc.bearing
@@ -487,7 +499,12 @@ fun MapScreen() {
         FloatingActionButton(
             onClick = {
                 val map = mapLibreMap
-                val location = map?.locationComponent?.lastKnownLocation
+                val locationComponent = map?.locationComponent
+                val location = if (locationComponent?.isLocationComponentActivated == true) {
+                    locationComponent.lastKnownLocation
+                } else {
+                    null
+                }
                 if (map != null && location != null) {
                     map.easeCamera(
                         CameraUpdateFactory.newLatLng(LatLng(location.latitude, location.longitude)),

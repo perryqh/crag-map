@@ -20,10 +20,11 @@ from typing import Iterable
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS cliff_corridor (
-  parent_uuid TEXT PRIMARY KEY,
+  parent_uuid TEXT NOT NULL,
   name TEXT NOT NULL,
   geojson TEXT NOT NULL,
-  child_uuids_json TEXT NOT NULL
+  child_uuids_json TEXT NOT NULL,
+  PRIMARY KEY(parent_uuid)
 );
 """
 
