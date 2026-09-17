@@ -36,7 +36,11 @@ data class ClimbEntity(
     // climbers actually read a formation, not alphabetical by name.
     @ColumnInfo(name = "left_right_index") val leftRightIndex: Int?,
     val lat: Double?,
-    val lng: Double?
+    val lng: Double?,
+    // OpenBeta's SafetyEnum (PG/PG13/R/X/runout/terrain), already normalized
+    // to null for the "no warning" case by openbeta_export.py — this is a
+    // danger/runout rating, not a quality rating (OpenBeta has no star field).
+    @ColumnInfo(name = "safety_rating") val safetyRating: String? = null
 )
 
 /** name/parentName-only projection for area search — not a full AreaEntity row. */

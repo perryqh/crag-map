@@ -26,7 +26,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.perryhertler.cragmap.data.AreaEntity
@@ -172,10 +175,19 @@ fun AreaSheet(
                     ) {
                         Column(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
                             Text(
-                                text = buildString {
+                                text = buildAnnotatedString {
                                     append(climb.name)
                                     if (!climb.ydsGrade.isNullOrBlank()) append("  ·  ${climb.ydsGrade}")
                                     if (!climb.climbType.isNullOrBlank()) append("  ·  ${climb.climbType}")
+                                    // OpenBeta's danger/runout rating (PG/PG13/R/X) — not a quality
+                                    // rating, OpenBeta has no star field at all. Colored so it
+                                    // actually catches the eye of someone scanning for a lead.
+                                    if (!climb.safetyRating.isNullOrBlank()) {
+                                        append("  ·  ")
+                                        withStyle(SpanStyle(color = Color(0xFFB00020), fontWeight = FontWeight.Bold)) {
+                                            append(climb.safetyRating)
+                                        }
+                                    }
                                 },
                                 fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Normal
                             )

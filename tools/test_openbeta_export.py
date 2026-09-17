@@ -47,6 +47,7 @@ FIXTURE_TREE = {
                 "name": "Clean Route",
                 "grades": {"yds": "5.9"},
                 "type": {"trad": True, "sport": False, "bouldering": False, "tr": False, "aid": False, "mixed": False},
+                "safety": "UNSPECIFIED",
                 "content": {"description": "A normal, non-infringing description."},
                 # Deliberately opposite of alphabetical order (Clean < Disputed) so
                 # a test can tell "sorted by name" and "sorted by left_right_index"
@@ -58,6 +59,7 @@ FIXTURE_TREE = {
                 "name": "Disputed Route",
                 "grades": {"yds": "5.10a"},
                 "type": {"trad": False, "sport": True, "bouldering": False, "tr": False, "aid": False, "mixed": False},
+                "safety": "R",
                 "content": {"description": "OpenBeta plagiarized this description from Mountain Project."},
                 "metadata": {"leftRightIndex": 1},
             },
@@ -122,6 +124,12 @@ class WalkTests(unittest.TestCase):
         self.assertEqual(by_uuid["climb-clean"][6], 5)
         self.assertEqual(by_uuid["climb-plagiarized"][6], 1)
 
+    def test_safety_rating_is_captured_and_normalized(self):
+        # row layout: ..., left_right_index, lat, lng, safety_rating
+        by_uuid = {row[0]: row for row in self.rows_climb}
+        self.assertIsNone(by_uuid["climb-clean"][9], "UNSPECIFIED should be normalized to None")
+        self.assertEqual(by_uuid["climb-plagiarized"][9], "R")
+
 
 class QueryOpenbetaRetryTests(unittest.TestCase):
     """Regression test: a stalled read (not a connection failure) raises a bare
@@ -163,10 +171,25 @@ class ClimbTypeTests(unittest.TestCase):
         self.assertEqual(export.climb_type({}), "unknown")
 
 
+class SafetyRatingTests(unittest.TestCase):
+    def test_unspecified_becomes_none(self):
+        self.assertIsNone(export.safety_rating("UNSPECIFIED"))
+
+    def test_none_stays_none(self):
+        self.assertIsNone(export.safety_rating(None))
+
+    def test_blank_becomes_none(self):
+        self.assertIsNone(export.safety_rating(""))
+
+    def test_real_rating_passes_through(self):
+        for value in ("PG", "PG13", "R", "X", "runout", "terrain"):
+            self.assertEqual(export.safety_rating(value), value)
+
+
 class BuildDbTests(unittest.TestCase):
     def test_schema_matches_room_expectations_and_fts_search_works(self):
         rows_area = [("a1", "Area One", None, 0, 0, 1.0, 2.0, 5)]
-        rows_climb = [("c1", "a1", "Vivesection", "5.11a", "trad", None, 11, 1.0, 2.0)]
+        rows_climb = [("c1", "a1", "Vivesection", "5.11a", "trad", None, 11, 1.0, 2.0, "R")]
         with tempfile.NamedTemporaryFile(suffix=".db") as f:
             export.build_db(f.name, rows_area, rows_climb, max_depth=0)
             conn = sqlite3.connect(f.name)
@@ -188,6 +211,7 @@ class BuildDbTests(unittest.TestCase):
             cur.execute("PRAGMA table_info(climb)")
             climb_cols = {row[1] for row in cur.fetchall()}
             self.assertIn("left_right_index", climb_cols)
+            self.assertIn("safety_rating", climb_cols)
 
             # The FTS prefix-search query the Android app runs at runtime.
             cur.execute(
@@ -196,6 +220,9 @@ class BuildDbTests(unittest.TestCase):
                 ("vive*",),
             )
             self.assertEqual([row[0] for row in cur.fetchall()], ["Vivesection"])
+
+            cur.execute("SELECT safety_rating FROM climb WHERE uuid = 'c1'")
+            self.assertEqual(cur.fetchone()[0], "R")
             conn.close()
 
     def test_ordering_by_left_right_index_matches_the_android_apps_query(self):
@@ -204,9 +231,9 @@ class BuildDbTests(unittest.TestCase):
         # not insertion order — and alphabetical-by-name would give a different
         # (wrong) result here, matching the real Hawk's Nest data shape.
         rows_climb = [
-            ("c-b", "a1", "Bravo", None, "trad", None, 10, 1.0, 2.0),
-            ("c-a", "a1", "Alpha", None, "trad", None, 0, 1.0, 2.0),
-            ("c-c", "a1", "Charlie", None, "trad", None, 5, 1.0, 2.0),
+            ("c-b", "a1", "Bravo", None, "trad", None, 10, 1.0, 2.0, None),
+            ("c-a", "a1", "Alpha", None, "trad", None, 0, 1.0, 2.0, None),
+            ("c-c", "a1", "Charlie", None, "trad", None, 5, 1.0, 2.0, None),
         ]
         with tempfile.NamedTemporaryFile(suffix=".db") as f:
             export.build_db(f.name, rows_area, rows_climb, max_depth=0)

@@ -29,6 +29,7 @@ query AreaTree($uuid: ID!) {
       name
       grades { yds }
       type { trad sport bouldering tr aid mixed }
+      safety
       content { description }
       metadata { leftRightIndex }
     }
@@ -72,6 +73,15 @@ def climb_type(t: dict) -> str:
     return "unknown"
 
 
+def safety_rating(value):
+    # OpenBeta's default/no-data value is the literal string "UNSPECIFIED" —
+    # normalize that (and blank) to None so the app only ever shows a badge
+    # when there's an actual X/R/PG-type warning to show.
+    if not value or value == "UNSPECIFIED":
+        return None
+    return value
+
+
 def walk(uuid, parent_uuid, depth, rows_area, rows_climb, max_depth_seen):
     data = query_openbeta(uuid)
     is_leaf = 1 if len(data["climbs"]) > 0 else 0
@@ -99,6 +109,7 @@ def walk(uuid, parent_uuid, depth, rows_area, rows_climb, max_depth_seen):
                 (c.get("metadata") or {}).get("leftRightIndex"),
                 lat,
                 lng,
+                safety_rating(c.get("safety")),
             )
         )
 
@@ -144,6 +155,7 @@ def build_db(path, rows_area, rows_climb, max_depth):
           left_right_index INTEGER,
           lat              REAL,
           lng              REAL,
+          safety_rating    TEXT,
           PRIMARY KEY(uuid)
         );
 
@@ -161,8 +173,8 @@ def build_db(path, rows_area, rows_climb, max_depth):
         rows_area,
     )
     cur.executemany(
-        "INSERT INTO climb (uuid, area_uuid, name, yds_grade, climb_type, description, left_right_index, lat, lng) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO climb (uuid, area_uuid, name, yds_grade, climb_type, description, left_right_index, lat, lng, safety_rating) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
         rows_climb,
     )
     cur.executemany(
