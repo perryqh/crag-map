@@ -18,17 +18,31 @@ area/climb, since there's no wall-facing column in that schema yet.
 Run this after every openbeta_export.py rebuild — a fresh export has no
 knowledge of prior field surveys, so overrides must be reapplied each time.
 
+The app's "Export" action (MapScreen.kt's exportOverrides) now bundles pins
+and photos into one field_export.zip, so <overrides> can be that zip
+directly — pin_overrides.json is read out of it in memory. A zip with no
+pin_overrides.json in it (a trip that only captured photos) is treated as
+zero pin overrides, not an error; run tools/merge_photo_overrides.py on the
+same zip for the photo side.
+
 Usage:
-    python3 merge_pin_overrides.py <db_path> <overrides.json>
+    python3 merge_pin_overrides.py <db_path> <overrides.json-or-zip>
 """
 import json
 import sqlite3
 import sys
+import zipfile
 
 STALE_FIX_THRESHOLD_MILLIS = 20_000
 
 
 def load_overrides(path):
+    if path.endswith(".zip"):
+        with zipfile.ZipFile(path) as zf:
+            if "pin_overrides.json" not in zf.namelist():
+                return []
+            with zf.open("pin_overrides.json") as f:
+                return json.load(f)
     with open(path) as f:
         return json.load(f)
 

@@ -14,6 +14,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1-spike"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -80,5 +81,17 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.test:core:1.6.1")
+
+    // Instrumented UI tests — need a real device/emulator (Compose semantics tree
+    // over a real Activity, real Room/FTS on-device, real runtime permission flow).
+    // See MapScreenInstrumentedTest for what these cover.
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    // Stubs the external-camera-app intent (ACTION_IMAGE_CAPTURE) so the photo
+    // capture round trip is testable without a real/vendor camera app's UI —
+    // see PhotoCaptureInstrumentedTest.
+    androidTestImplementation("androidx.test.espresso:espresso-intents:3.6.1")
 }

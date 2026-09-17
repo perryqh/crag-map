@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.perryhertler.cragmap.data.AppDatabase
 import com.perryhertler.cragmap.data.AreaSearchResult
@@ -66,7 +67,9 @@ fun SearchBar(
             onValueChange = { query = it },
             placeholder = { Text("Search routes, walls, or grades…") },
             singleLine = true,
-            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surface)
+                .testTag("search-field")
         )
         if (results.isNotEmpty()) {
             LazyColumn(

@@ -1,11 +1,14 @@
 package com.perryhertler.cragmap.map
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -19,15 +22,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.perryhertler.cragmap.data.PhotoWithTargets
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Review-before-you-send step for Phase 3's field capture: a fat-fingered tap
@@ -40,7 +52,9 @@ import kotlin.math.roundToInt
 @Composable
 fun PinOverrideReviewSheet(
     overrides: List<PinOverrideEntity>,
+    photos: List<PhotoWithTargets> = emptyList(),
     onDelete: (PinOverrideEntity) -> Unit,
+    onDeletePhoto: (PhotoWithTargets) -> Unit = {},
     onExport: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -52,21 +66,25 @@ fun PinOverrideReviewSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Captured pins (${overrides.size})", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                TextButton(onClick = onExport, enabled = overrides.isNotEmpty()) {
+                Text(
+                    "Captured pins (${overrides.size}) · photos (${photos.size})",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                TextButton(onClick = onExport, enabled = overrides.isNotEmpty() || photos.isNotEmpty()) {
                     Text("Export")
                 }
             }
             Divider(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
-            if (overrides.isEmpty()) {
+            if (overrides.isEmpty() && photos.isEmpty()) {
                 Text(
-                    "No pins captured yet.",
+                    "No pins or photos captured yet.",
                     color = Color.Gray,
                     modifier = Modifier.padding(vertical = 24.dp)
                 )
             } else {
                 LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                    items(overrides, key = { it.targetUuid }) { o ->
+                    items(overrides, key = { "pin-${it.targetUuid}" }) { o ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -93,8 +111,48 @@ fun PinOverrideReviewSheet(
                         }
                         Divider()
                     }
+                    items(photos, key = { "photo-${it.photo.id}" }) { p ->
+                        val names = p.targets.joinToString(", ") { it.targetName }.ifBlank { "(untagged)" }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            LocalPhotoThumbnail(
+                                filePath = p.photo.filePath,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .padding(end = 8.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(names, fontWeight = FontWeight.Medium)
+                                Text("photo", fontSize = 12.sp, color = Color.Gray)
+                            }
+                            IconButton(onClick = { onDeletePhoto(p) }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Delete photo of $names")
+                            }
+                        }
+                        Divider()
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LocalPhotoThumbnail(filePath: String, modifier: Modifier = Modifier) {
+    var bitmap by remember(filePath) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(filePath) {
+        bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+                BitmapFactory.decodeFile(filePath, opts)
+            }.getOrNull()
+        }
+    }
+    bitmap?.let {
+        Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = modifier)
     }
 }

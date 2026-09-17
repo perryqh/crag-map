@@ -53,13 +53,21 @@ import com.perryhertler.cragmap.CragMapApplication
 import com.perryhertler.cragmap.data.AppDatabase
 import com.perryhertler.cragmap.data.AreaEntity
 import com.perryhertler.cragmap.data.ClimbEntity
+import com.perryhertler.cragmap.data.PhotoOverrideEntity
+import com.perryhertler.cragmap.data.PhotoTargetEntity
+import com.perryhertler.cragmap.data.PhotoWithTargets
 import com.perryhertler.cragmap.data.PinOverrideDatabase
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
+import com.perryhertler.cragmap.data.allWithTargets
+import com.perryhertler.cragmap.data.deletePhotoAndTargets
 import com.perryhertler.cragmap.data.overridesToJson
+import com.perryhertler.cragmap.data.photoOverridesToJson
 import com.perryhertler.cragmap.search.SearchBar
 import com.perryhertler.cragmap.search.SearchResultItem
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -116,6 +124,16 @@ private const val NEAR_ME_MAX_DISTANCE_M = 150.0
 // tapping its dot does — open a climb list or a child-area list.
 private data class MapLabel(val area: AreaEntity, val text: String, val x: Int, val y: Int)
 
+/** A just-captured photo awaiting target selection — see MapScreen's
+ * takePhotoLauncher and PhotoTagSheet. primaryTarget is whichever button
+ * (area or climb) triggered the capture; candidates are the other climbs
+ * visible in the same sheet, offered as additional tags. */
+private data class PendingPhotoTag(
+    val file: File,
+    val primaryTarget: Triple<String, String, String>,
+    val candidates: List<ClimbEntity>
+)
+
 @Composable
 fun MapScreen() {
     val context = LocalContext.current
@@ -139,8 +157,67 @@ fun MapScreen() {
     var editModeEnabled by remember { mutableStateOf(false) }
     var overrideCount by remember { mutableStateOf(0) }
     var overridesForReview by remember { mutableStateOf<List<PinOverrideEntity>?>(null) }
+    // Photo capture (same Edit Mode gating as pins, same PinOverrideDatabase —
+    // see the blueprint's "make photos available" thread). Multiple photos per
+    // target is the normal case, unlike pins, so this is a count/list, not a
+    // per-target upsert.
+    var photoCount by remember { mutableStateOf(0) }
+    var photosForReview by remember { mutableStateOf<List<PhotoWithTargets>?>(null) }
     LaunchedEffect(Unit) {
         overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
+        photoCount = withContext(Dispatchers.IO) { overrideDb.photoOverrideDao().allPhotos().size }
+    }
+    // Holds the destination file + trigger info for a capture in flight
+    // between launching the camera app and its result callback —
+    // TakePicture only returns a success boolean, not which file it wrote to.
+    // candidates is every OTHER climb visible in the sheet the capture was
+    // triggered from, offered as extra tag choices once the photo comes back
+    // (a photo of one wall often covers several routes a few meters apart —
+    // see the blueprint's photo-tagging discussion).
+    var pendingPhotoFile by remember { mutableStateOf<File?>(null) }
+    var pendingPhotoTarget by remember { mutableStateOf<Triple<String, String, String>?>(null) }
+    var pendingPhotoCandidates by remember { mutableStateOf<List<ClimbEntity>>(emptyList()) }
+    var photoTagChooser by remember { mutableStateOf<PendingPhotoTag?>(null) }
+
+    suspend fun saveCapturedPhoto(file: File, targets: List<Triple<String, String, String>>) {
+        withContext(Dispatchers.IO) {
+            val photoId = overrideDb.photoOverrideDao().insertPhoto(
+                PhotoOverrideEntity(filePath = file.absolutePath, capturedAtMillis = System.currentTimeMillis())
+            )
+            overrideDb.photoOverrideDao().insertTargets(
+                targets.map { (uuid, type, name) -> PhotoTargetEntity(photoId, uuid, type, name) }
+            )
+        }
+        photoCount = withContext(Dispatchers.IO) { overrideDb.photoOverrideDao().allPhotos().size }
+        val label = if (targets.size == 1) targets[0].third else "${targets.size} climbs"
+        // Explicit Main dispatch, not just relying on the ambient scope
+        // context: a Toast right after a withContext(IO) hop isn't reliably
+        // back on a thread with a prepared Looper otherwise.
+        withContext(Dispatchers.Main) {
+            Toast.makeText(context, "Captured photo for $label", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val takePhotoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        val target = pendingPhotoTarget
+        val file = pendingPhotoFile
+        val candidates = pendingPhotoCandidates
+        pendingPhotoTarget = null
+        pendingPhotoFile = null
+        pendingPhotoCandidates = emptyList()
+        if (success && target != null && file != null) {
+            if (candidates.isNotEmpty()) {
+                photoTagChooser = PendingPhotoTag(file, target, candidates)
+            } else {
+                scope.launch { saveCapturedPhoto(file, listOf(target)) }
+            }
+        } else {
+            // Cancelled or failed — drop the empty placeholder file TakePicture
+            // pre-creates at the destination Uri before the camera app writes to it.
+            file?.delete()
+        }
     }
     var locationPermissionGranted by remember {
         mutableStateOf(
@@ -240,21 +317,41 @@ fun MapScreen() {
                 )
             }
             overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
-            if (fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS) {
-                Toast.makeText(
-                    context,
-                    "Captured pin for $targetName (GPS fix is ${fixAgeMillis / 1000}s old — may be stale)",
-                    Toast.LENGTH_LONG
-                ).show()
-            } else {
-                Toast.makeText(context, "Captured pin for $targetName", Toast.LENGTH_SHORT).show()
+            // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
+            withContext(Dispatchers.Main) {
+                if (fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS) {
+                    Toast.makeText(
+                        context,
+                        "Captured pin for $targetName (GPS fix is ${fixAgeMillis / 1000}s old — may be stale)",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(context, "Captured pin for $targetName", Toast.LENGTH_SHORT).show()
+                }
             }
         }
+    }
+
+    // Delegates to whatever camera app is installed via an implicit intent
+    // (ActivityResultContracts.TakePicture), rather than a custom in-app
+    // camera UI — no CAMERA runtime permission needed as a result. The photo
+    // writes directly into app-private storage at the FileProvider Uri handed
+    // to the camera app; capture only takes effect once exported and merged
+    // via tools/merge_photo_overrides.py, same as pin captures.
+    fun capturePhoto(targetUuid: String, targetType: String, targetName: String, candidates: List<ClimbEntity>) {
+        val dir = File(context.filesDir, "photos").apply { mkdirs() }
+        val file = File(dir, "${targetUuid}_${System.currentTimeMillis()}.jpg")
+        pendingPhotoTarget = Triple(targetUuid, targetType, targetName)
+        pendingPhotoFile = file
+        pendingPhotoCandidates = candidates
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        takePhotoLauncher.launch(uri)
     }
 
     fun openOverrideReview() {
         scope.launch {
             overridesForReview = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all() }
+            photosForReview = withContext(Dispatchers.IO) { overrideDb.photoOverrideDao().allWithTargets() }
         }
     }
 
@@ -266,28 +363,72 @@ fun MapScreen() {
         }
     }
 
+    fun deletePhotoOverride(p: PhotoWithTargets) {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                overrideDb.photoOverrideDao().deletePhotoAndTargets(p.photo.id)
+                File(p.photo.filePath).delete()
+            }
+            photosForReview = withContext(Dispatchers.IO) { overrideDb.photoOverrideDao().allWithTargets() }
+            photoCount = photosForReview?.size ?: 0
+        }
+    }
+
+    // Bundles both pin and photo overrides into one zip so the field trip has
+    // a single share-sheet action, and one file to email/Drive/AirDrop off the
+    // phone at the end of the day — see the blueprint's "make photos
+    // available" thread for why this isn't a live upload. Both desk-side
+    // tools (merge_pin_overrides.py, merge_photo_overrides.py) read directly
+    // from this same zip.
     fun exportOverrides() {
         scope.launch {
             try {
                 val overrides = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all() }
-                if (overrides.isEmpty()) {
-                    Toast.makeText(context, "No captured pins to export yet", Toast.LENGTH_SHORT).show()
+                val photos = withContext(Dispatchers.IO) { overrideDb.photoOverrideDao().allWithTargets() }
+                if (overrides.isEmpty() && photos.isEmpty()) {
+                    // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "No captured pins or photos to export yet", Toast.LENGTH_SHORT).show()
+                    }
                     return@launch
                 }
                 val file = withContext(Dispatchers.IO) {
                     val dir = File(context.cacheDir, "exports").apply { mkdirs() }
-                    File(dir, "pin_overrides.json").apply { writeText(overridesToJson(overrides)) }
+                    val zipFile = File(dir, "field_export.zip")
+                    ZipOutputStream(zipFile.outputStream()).use { zip ->
+                        if (overrides.isNotEmpty()) {
+                            zip.putNextEntry(ZipEntry("pin_overrides.json"))
+                            zip.write(overridesToJson(overrides).toByteArray())
+                            zip.closeEntry()
+                        }
+                        if (photos.isNotEmpty()) {
+                            zip.putNextEntry(ZipEntry("photo_overrides.json"))
+                            zip.write(photoOverridesToJson(photos).toByteArray())
+                            zip.closeEntry()
+                            for (p in photos) {
+                                val photoFile = File(p.photo.filePath)
+                                if (!photoFile.exists()) continue
+                                zip.putNextEntry(ZipEntry("photos/${photoFile.name}"))
+                                photoFile.inputStream().use { it.copyTo(zip) }
+                                zip.closeEntry()
+                            }
+                        }
+                    }
+                    zipFile
                 }
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                 val intent = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/json"
+                    type = "application/zip"
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                context.startActivity(Intent.createChooser(intent, "Export pin overrides"))
+                context.startActivity(Intent.createChooser(intent, "Export field survey data"))
             } catch (e: Exception) {
-                Log.e("CragMap", "failed to export pin overrides", e)
-                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                Log.e("CragMap", "failed to export field survey data", e)
+                // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -594,16 +735,50 @@ fun MapScreen() {
                 overrideCount = overrideCount,
                 onCaptureAreaPin = { capturePin(content.area.uuid, "area", content.area.name) },
                 onCaptureClimbPin = { climb: ClimbEntity -> capturePin(climb.uuid, "climb", climb.name) },
+                photoCount = photoCount,
+                onCaptureAreaPhoto = {
+                    val candidates = (content as? SheetContent.Climbs)?.climbs ?: emptyList()
+                    capturePhoto(content.area.uuid, "area", content.area.name, candidates)
+                },
+                onCaptureClimbPhoto = { climb: ClimbEntity ->
+                    val candidates = (content as? SheetContent.Climbs)?.climbs ?: emptyList()
+                    capturePhoto(climb.uuid, "climb", climb.name, candidates)
+                },
                 onOpenOverrideReview = { openOverrideReview() }
             )
         }
 
-        overridesForReview?.let { overrides ->
+        photoTagChooser?.let { pending ->
+            val preselected = if (pending.primaryTarget.second == "climb") setOf(pending.primaryTarget.first) else emptySet()
+            PhotoTagSheet(
+                candidates = pending.candidates,
+                initiallySelected = preselected,
+                onConfirm = { selectedUuids ->
+                    val climbTargets = pending.candidates
+                        .filter { it.uuid in selectedUuids }
+                        .map { Triple(it.uuid, "climb", it.name) }
+                    val targets = (listOf(pending.primaryTarget) + climbTargets).distinctBy { it.first }
+                    scope.launch { saveCapturedPhoto(pending.file, targets) }
+                    photoTagChooser = null
+                },
+                onDismiss = {
+                    pending.file.delete()
+                    photoTagChooser = null
+                }
+            )
+        }
+
+        if (overridesForReview != null || photosForReview != null) {
             PinOverrideReviewSheet(
-                overrides = overrides,
+                overrides = overridesForReview ?: emptyList(),
+                photos = photosForReview ?: emptyList(),
                 onDelete = { o -> deleteOverride(o) },
+                onDeletePhoto = { p -> deletePhotoOverride(p) },
                 onExport = { exportOverrides() },
-                onDismiss = { overridesForReview = null }
+                onDismiss = {
+                    overridesForReview = null
+                    photosForReview = null
+                }
             )
         }
     }

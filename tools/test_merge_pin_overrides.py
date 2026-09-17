@@ -1,7 +1,11 @@
+import json
 import sqlite3
+import tempfile
 import unittest
+import zipfile
+from pathlib import Path
 
-from merge_pin_overrides import apply_overrides, find_stale_overrides
+from merge_pin_overrides import apply_overrides, find_stale_overrides, load_overrides
 
 
 def make_conn():
@@ -98,6 +102,39 @@ class FindStaleOverridesTests(unittest.TestCase):
     def test_custom_threshold(self):
         overrides = [{"targetUuid": "a1", "fixAgeMillis": 6000}]
         self.assertEqual(overrides, find_stale_overrides(overrides, threshold_millis=5000))
+
+
+class LoadOverridesTests(unittest.TestCase):
+    def test_plain_json_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pin_overrides.json"
+            path.write_text(json.dumps([{"targetUuid": "a1", "targetType": "area", "lat": 1.0, "lng": 2.0}]))
+            self.assertEqual(
+                [{"targetUuid": "a1", "targetType": "area", "lat": 1.0, "lng": 2.0}],
+                load_overrides(str(path)),
+            )
+
+    def test_zip_with_pin_overrides_extracts_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "field_export.zip"
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr(
+                    "pin_overrides.json",
+                    json.dumps([{"targetUuid": "a1", "targetType": "area", "lat": 1.0, "lng": 2.0}]),
+                )
+            self.assertEqual(
+                [{"targetUuid": "a1", "targetType": "area", "lat": 1.0, "lng": 2.0}],
+                load_overrides(str(zip_path)),
+            )
+
+    def test_zip_without_pin_overrides_is_empty_not_an_error(self):
+        # A trip that only captured photos — see merge_photo_overrides.py for
+        # the other half of the same export.
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "field_export.zip"
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr("photo_overrides.json", "[]")
+            self.assertEqual([], load_overrides(str(zip_path)))
 
 
 if __name__ == "__main__":
