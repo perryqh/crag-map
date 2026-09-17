@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.perryhertler.cragmap.data.AreaEntity
 import com.perryhertler.cragmap.data.ClimbEntity
+import com.perryhertler.cragmap.data.PinOverrideEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -97,6 +98,10 @@ fun AreaSheet(
     // meaningful when editModeEnabled — see MapScreen's edit-mode toggle.
     editModeEnabled: Boolean = false,
     overrideCount: Int = 0,
+    // Existing field pins keyed by target uuid — Review already loads the full
+    // list; AreaSheet only needed counts before. Enough to show "Captured:
+    // lat, lng" for the open area (and each climb row) without a bigger refactor.
+    pinOverridesByUuid: Map<String, PinOverrideEntity> = emptyMap(),
     onCaptureAreaPin: () -> Unit = {},
     onCaptureClimbPin: (ClimbEntity) -> Unit = {},
     // Photo capture — same Edit Mode gating as pins (see the blueprint's
@@ -233,6 +238,7 @@ fun AreaSheet(
                             Icon(Icons.Filled.MyLocation, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
                             Text("Set ${content.area.name}'s pin to my location")
                         }
+                        pinOverridesByUuid[content.area.uuid]?.let { CapturedCoordsLine(it) }
                         TextButton(onClick = onCaptureAreaPhoto) {
                             Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
                             Text("Take a photo of ${content.area.name}")
@@ -292,6 +298,9 @@ fun AreaSheet(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            if (editModeEnabled) {
+                                pinOverridesByUuid[climb.uuid]?.let { CapturedCoordsLine(it) }
+                            }
                         }
                         // Only worth setting when a route sits on a different face than its
                         // formation's main pin — see NearMe's honesty-vs-GPS-noise tradeoff.

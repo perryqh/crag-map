@@ -1,7 +1,9 @@
 package com.perryhertler.cragmap.map
 
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +33,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,6 +63,8 @@ fun PinOverrideReviewSheet(
     onExport: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState()
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -94,15 +101,22 @@ fun PinOverrideReviewSheet(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(o.targetName, fontWeight = FontWeight.Medium)
                                 val stale = o.fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS
+                                val coords = formatCapturedCoordinates(o.lat, o.lng)
                                 val subtitle = buildString {
                                     append(o.targetType)
+                                    append(" · ")
+                                    append(coords)
                                     o.headingDegrees?.let { append(" · ${it.roundToInt()}°") }
                                     if (stale) append(" · fix was ${o.fixAgeMillis / 1000}s old — STALE")
                                 }
                                 Text(
                                     text = subtitle,
                                     fontSize = 12.sp,
-                                    color = if (stale) Color(0xFFB00020) else Color.Gray
+                                    color = if (stale) Color(0xFFB00020) else Color.Gray,
+                                    modifier = Modifier.clickable {
+                                        clipboard.setText(AnnotatedString(coords))
+                                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                                    }
                                 )
                             }
                             IconButton(onClick = { onDelete(o) }) {
