@@ -2,6 +2,7 @@ package com.perryhertler.cragmap.tiles
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -18,7 +19,14 @@ class LocalTileServer(private val context: Context, listenPort: Int = 8085) : Na
 
     private val db: SQLiteDatabase by lazy {
         val dest = File(context.filesDir, "devils_lake.mbtiles")
-        if (!dest.exists()) {
+        // Same class of bug the Room database hit: copying only "if it doesn't
+        // already exist" means a rebuilt/updated bundled asset (new bbox, more
+        // tiles, etc.) never reaches an existing install — the internal copy
+        // from months-old first install would just sit there forever, silently
+        // stale. Comparing sizes catches any asset change without needing a
+        // manually-maintained version number.
+        val assetSize = context.assets.openFd("devils_lake.mbtiles").use { it.length }
+        if (!dest.exists() || dest.length() != assetSize) {
             context.assets.open("devils_lake.mbtiles").use { input ->
                 FileOutputStream(dest).use { output -> input.copyTo(output) }
             }
@@ -63,6 +71,7 @@ class LocalTileServer(private val context: Context, listenPort: Int = 8085) : Na
                         bytes.size.toLong()
                     )
                 } else {
+                    Log.w("CragMap", "tile 404: z=$z x=$x y=$y (tmsRow=$tmsRow)")
                     newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "no tile at z=$z x=$x y=$y")
                 }
             }
