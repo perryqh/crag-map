@@ -40,26 +40,6 @@ Working end-to-end on-device, verified on both a real Pixel phone and an Android
 - `merge_pin_overrides.py` — applies field-captured GPS pins onto a built `devils_lake.db` (accepts either a raw `pin_overrides.json` or the `field_export.zip` the app's Export action produces).
 - `merge_photo_overrides.py` — copies field-captured photos out of that same zip into `assets/photos/<uuid>/`, once per climb/area it's tagged to (a photo covering 3 climbs lands in 3 folders). The app reads these back at runtime with a plain `AssetManager.list()` — no database involved, same read-only-bundled-snapshot shape as `devils_lake.db`.
 
-## Dev-only Yard Crag dry run
-
-Debug builds ship a second root area, **Yard Crag [DEV]**, seeded at the house GPS so you can dry-run Near Me / Edit Mode pin+photo / export / merge at home before Devil's Lake. Release builds keep the clean Devil's Lake pack from `app/src/main/assets/`.
-
-- **Regenerate** the debug asset (after any main-pack rebuild, or to move the house center):
-
-```
-python3 tools/seed_yard_crag.py \
-  --source app/src/main/assets/devils_lake.db \
-  --out app/src/debug/assets/devils_lake.db \
-  --lat 43.058510 --lng -88.157913
-python3 tools/test_seed_yard_crag.py
-```
-
-- **Release stays clean.** Only `app/src/debug/assets/devils_lake.db` is seeded; `app/src/main/assets/devils_lake.db` is untouched. Android's debug source set overrides main assets for debug APKs.
-- **Basemap tiles stay Devil's Lake-only.** The underlay at the house is blank — that's expected. The recenter FAB already flies to GPS.
-- **Workflow:** install a debug build → search "Yard" or tap Near Me → open a `[DEV]` leaf → Edit Mode to capture pins/photos → Export → desk-merge with `merge_pin_overrides.py` / `merge_photo_overrides.py` (against a copy, not the release asset).
-
-Bump `AppDatabase` version whenever the debug (or main) pack asset changes so existing installs destructive-recopy the new snapshot.
-
 ## Future improvements
 
 - **On-map text labels.** A `SymbolLayer` sharing a `GeoJsonSource` with a `CircleLayer` silently broke rendering for both, on the original test device's GPU (Imagination PowerVR). Labels render as a separate Compose overlay instead for now (see `MapScreen.kt`'s `addAreaLayer`); a real fix — or confirmation this is fine on other GPUs — is still open.
@@ -76,12 +56,11 @@ python3 tools/test_openbeta_export.py        # walk/depth/is_leaf logic, plagiar
 python3 tools/test_build_mbtiles.py          # bbox → tile-index math, MBTiles metadata
 python3 tools/test_merge_pin_overrides.py    # pin merge logic, plain-json vs. zip loading, stale-fix detection
 python3 tools/test_merge_photo_overrides.py  # photo merge logic, multi-target fan-out, append-across-trips behavior
-python3 tools/test_seed_yard_crag.py         # Yard Crag [DEV] debug seed (idempotent, Near-me distances)
 ./gradlew testDebugUnitTest                  # Room/FTS search, via Robolectric — no device/emulator needed
 ./gradlew connectedDebugAndroidTest          # Compose UI on a real device/emulator — search, sheets, edit mode, photo capture
 ```
 
-Those python tests run offline against fixture data — no live network calls, no Android device. `connectedDebugAndroidTest` needs a running device or emulator (`adb devices` must show one) and exercises the real bundled `devils_lake.db` over Room/FTS, the real Compose semantics tree on `MainActivity`, the real runtime location-permission flow, and the photo-capture round trip (camera launch → result → save → tag) with the external camera app stubbed out via Espresso-Intents rather than driven live, since real camera-app UI is too device/vendor-dependent to automate reliably. None of this is covered by Robolectric, and none of it covers the map's own native-GL rendering (pins/labels/tiles), which stays a manual on-device check.
+The first four run offline against fixture data — no live network calls, no Android device. `connectedDebugAndroidTest` needs a running device or emulator (`adb devices` must show one) and exercises the real bundled `devils_lake.db` over Room/FTS, the real Compose semantics tree on `MainActivity`, the real runtime location-permission flow, and the photo-capture round trip (camera launch → result → save → tag) with the external camera app stubbed out via Espresso-Intents rather than driven live, since real camera-app UI is too device/vendor-dependent to automate reliably. None of this is covered by Robolectric, and none of it covers the map's own native-GL rendering (pins/labels/tiles), which stays a manual on-device check.
 
 ## Building it yourself
 
