@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -158,10 +159,13 @@ fun MapScreen() {
     var mapLabels by remember { mutableStateOf<List<MapLabel>>(emptyList()) }
     var sheetContent by remember { mutableStateOf<SheetContent?>(null) }
     var nearMeResults by remember { mutableStateOf<List<NearbyFormation>?>(null) }
-    // Phase 3 field-survey mode (see PinOverride.kt). Off by default and not
-    // persisted across launches — a personal on-the-ground tool, not a
-    // feature aimed at typical users.
-    var editModeEnabled by remember { mutableStateOf(false) }
+    // Phase 3 field-survey mode (see PinOverride.kt). Off by default for a
+    // typical launch, but rememberSaveable so it survives Activity recreation
+    // (camera capture, permission dialogs, process death under memory
+    // pressure). Portrait lock alone still drops plain remember{} state when
+    // the camera app takes the foreground — that was the intermittent
+    // "edit mode turned itself off" bug in yard dry-run testing.
+    var editModeEnabled by rememberSaveable { mutableStateOf(false) }
     var overrideCount by remember { mutableStateOf(0) }
     var overridesForReview by remember { mutableStateOf<List<PinOverrideEntity>?>(null) }
     // Photo capture (same Edit Mode gating as pins, same PinOverrideDatabase —

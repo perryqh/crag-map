@@ -17,11 +17,10 @@
         <!-- usesCleartextTraffic is required because the local tile server is
              plain http://127.0.0.1 — traffic never leaves the device. -->
 
-        <!-- Locked portrait: an orientation change recreates the Activity and
-             was observed dropping edit-mode/sheet state (see Phase 3 field-
-             survey testing) since that state isn't rememberSaveable. Simplest
-             fix for a phone-in-hand map app that never benefited from
-             landscape anyway. -->
+        <!-- Locked portrait: an orientation change recreates the Activity.
+             Edit-mode now uses rememberSaveable, but sheet/map ephemeral
+             state still resets on recreation — and a phone-in-hand map app
+             never benefited from landscape anyway. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
