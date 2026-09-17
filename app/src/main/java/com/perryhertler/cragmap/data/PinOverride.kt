@@ -134,7 +134,9 @@ suspend fun PhotoOverrideDao.allWithTargets(): List<PhotoWithTargets> {
 @Database(
     entities = [PinOverrideEntity::class, PhotoOverrideEntity::class, PhotoTargetEntity::class],
     version = 4,
-    exportSchema = false
+    // Exported under app/schemas/ so MigrationTestHelper can validate upgrades
+    // and so future schema bumps have a checked-in baseline to migrate from.
+    exportSchema = true
 )
 abstract class PinOverrideDatabase : RoomDatabase() {
     abstract fun pinOverrideDao(): PinOverrideDao
@@ -150,7 +152,10 @@ abstract class PinOverrideDatabase : RoomDatabase() {
                     PinOverrideDatabase::class.java,
                     "pin_overrides.db"
                 )
-                    .fallbackToDestructiveMigration()
+                    // Real migrations — never wipe field pins/photos on a schema
+                    // bump. (AppDatabase still uses destructive fallback on
+                    // purpose: that DB is a disposable bundled snapshot.)
+                    .addMigrations(*PIN_OVERRIDE_MIGRATIONS)
                     .build()
                     .also { instance = it }
             }

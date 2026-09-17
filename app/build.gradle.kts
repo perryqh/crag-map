@@ -55,9 +55,21 @@ android {
             isIncludeAndroidResources = true
         }
     }
+
+    // MigrationTestHelper reads exported Room schemas from androidTest assets.
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+}
+
+// Checked-in Room schema JSON under app/schemas/ — required for
+// exportSchema=true and MigrationTestHelper validation of PinOverrideDatabase.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.activity:activity-compose:1.9.1")
@@ -94,4 +106,8 @@ dependencies {
     // capture round trip is testable without a real/vendor camera app's UI —
     // see PhotoCaptureInstrumentedTest.
     androidTestImplementation("androidx.test.espresso:espresso-intents:3.6.1")
+    // MigrationTestHelper for PinOverrideDatabase upgrade tests (see
+    // PinOverrideMigrationTest) — must match room-runtime above.
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
 }
+
