@@ -23,7 +23,9 @@ data class ClimbSearchResult(
 // mismatch this causes if the version wasn't also bumped. Since this whole
 // database is a read-only bundled snapshot (never user-written), destructive
 // migration — drop and recopy from the asset — is exactly the right recovery.
-@Database(entities = [AreaEntity::class, ClimbEntity::class], version = 3, exportSchema = false)
+// v4 also forces recopy when the debug Yard Crag asset changes (content-only
+// bump with no schema change — still intentional for this read-only pack DB).
+@Database(entities = [AreaEntity::class, ClimbEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun areaDao(): AreaDao
     abstract fun climbDao(): ClimbDao
