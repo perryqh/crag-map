@@ -1,4 +1,4 @@
-# Crag Map
+# Crag Atlas
 
 An offline, zoomable climb map for Android, starting with Devils Lake State Park (WI).
 
