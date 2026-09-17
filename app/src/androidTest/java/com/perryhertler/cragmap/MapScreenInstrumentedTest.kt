@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -136,15 +137,20 @@ class MapScreenInstrumentedTest {
         // its breadcrumb (Devil's Lake › … › East Bluff › East Bluff South Face).
         composeRule.onNodeWithTag("search-field").performTextInput("08. East Rampart")
 
+        // Typed query and result row both contain this string — take the last
+        // match (the result), not onNode(...), which requires uniqueness.
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodes(hasText("08. East Rampart", substring = true))
-                .fetchSemanticsNodes().isNotEmpty()
+                .fetchSemanticsNodes().size >= 2
         }
-        composeRule.onNode(hasText("08. East Rampart", substring = true)).performClick()
+        composeRule.onAllNodes(hasText("08. East Rampart", substring = true))
+            .onLast()
+            .performClick()
 
+        // Search clears on select; wait until only the sheet title remains.
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodes(hasText("08. East Rampart", substring = true))
-                .fetchSemanticsNodes().isNotEmpty()
+                .fetchSemanticsNodes().size == 1
         }
         composeRule.onNode(hasText("08. East Rampart", substring = true)).assertIsDisplayed()
 
@@ -153,7 +159,7 @@ class MapScreenInstrumentedTest {
         // an ancestor once it becomes the current sheet area (breadcrumbFor
         // excludes the current area).
         val eastBluffCrumb = "breadcrumb_3a59331f-cabd-54cc-a09e-3b7c15009de3"
-        composeRule.onNodeWithTag(eastBluffCrumb).performClick()
+        composeRule.onNodeWithTag(eastBluffCrumb).assertIsDisplayed().performClick()
 
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodes(hasTestTag(eastBluffCrumb)).fetchSemanticsNodes().isEmpty()
