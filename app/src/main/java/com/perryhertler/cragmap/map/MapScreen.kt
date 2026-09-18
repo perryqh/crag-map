@@ -586,6 +586,8 @@ fun MapScreen() {
             if (mapLibreMap == null) mv.getMapAsync { map ->
                 Log.d("CragMap", "getMapAsync fired, map=$map")
                 mapLibreMap = map
+                map.setMinZoomPreference(13.0)
+                map.setMaxZoomPreference(18.0)
                 map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
                     .target(DEVILS_LAKE_CENTER)
                     .zoom(INITIAL_ZOOM)
@@ -1060,6 +1062,8 @@ private fun buildBaseStyle(context: Context): Style.Builder {
     val port = (context.applicationContext as CragMapApplication).tileServerPort
     val tileUrl = "http://127.0.0.1:$port/tiles/{z}/{x}/{y}.jpg"
     val tileSet = TileSet("2.1.0", tileUrl).apply {
+        // Native ImageryTopo tiles exist through z16 for Devil's Lake; camera
+        // max zoom (setMaxZoomPreference) may go higher so MapLibre overzooms.
         minZoom = 13f
         maxZoom = 16f
     }
