@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.perryhertler.cragmap.data.PhotoWithTargets
+import com.perryhertler.cragmap.data.CaptureStance
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
 import kotlin.math.roundToInt
@@ -106,7 +107,10 @@ fun PinOverrideReviewSheet(
                                     append(o.targetType)
                                     append(" · ")
                                     append(coords)
-                                    o.headingDegrees?.let { append(" · ${it.roundToInt()}°") }
+                                    append(" · ${CaptureStance.fromStorage(o.stance).label}")
+                                    if (CaptureStance.fromStorage(o.stance) != CaptureStance.TOP) {
+                                        o.headingDegrees?.let { append(" · ${it.roundToInt()}°") }
+                                    }
                                     if (stale) append(" · fix was ${o.fixAgeMillis / 1000}s old — STALE")
                                 }
                                 Text(

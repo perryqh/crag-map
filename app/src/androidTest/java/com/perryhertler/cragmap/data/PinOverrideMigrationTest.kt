@@ -43,12 +43,13 @@ class PinOverrideMigrationTest {
 
         val db = helper.runMigrationsAndValidate(
             TEST_DB,
-            4,
+            5,
             true,
             *PIN_OVERRIDE_MIGRATIONS
         )
         assertPinSurvived(db, expectedUuid = "uuid-v1-pin")
         assertPhotoTablesEmpty(db)
+        assertStanceDefaultBase(db, "uuid-v1-pin")
     }
 
     @Test
@@ -70,9 +71,10 @@ class PinOverrideMigrationTest {
 
         val db = helper.runMigrationsAndValidate(
             TEST_DB,
-            4,
+            5,
             true,
-            MIGRATION_3_4
+            MIGRATION_3_4,
+            MIGRATION_4_5
         )
 
         db.query("SELECT * FROM pin_override WHERE targetUuid = 'uuid-v3-pin'").use { c ->
@@ -80,12 +82,13 @@ class PinOverrideMigrationTest {
             assertEquals(1500L, c.getLong(c.getColumnIndexOrThrow("fixAgeMillis")))
             assertEquals(182.5f, c.getFloat(c.getColumnIndexOrThrow("headingDegrees")), 0.001f)
         }
+        assertStanceDefaultBase(db, "uuid-v3-pin")
         assertPhotoTablesEmpty(db)
     }
 
     private fun assertPinSurvived(db: SupportSQLiteDatabase, expectedUuid: String) {
         db.query("SELECT * FROM pin_override WHERE targetUuid = ?", arrayOf(expectedUuid)).use { c ->
-            assertTrue("pin row must survive migrations to v4", c.moveToFirst())
+            assertTrue("pin row must survive migrations to latest", c.moveToFirst())
             assertEquals("climb", c.getString(c.getColumnIndexOrThrow("targetType")))
             assertEquals("Sample Climb", c.getString(c.getColumnIndexOrThrow("targetName")))
             assertEquals(43.41353, c.getDouble(c.getColumnIndexOrThrow("lat")), 0.00001)

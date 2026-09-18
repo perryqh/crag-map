@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -59,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.perryhertler.cragmap.data.AreaEntity
 import com.perryhertler.cragmap.data.ClimbEntity
+import com.perryhertler.cragmap.data.CaptureStance
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -100,6 +102,8 @@ fun AreaSheet(
     // Phase 3 (East Rampart baseline pack) field-survey capture. Only
     // meaningful when editModeEnabled — see MapScreen's edit-mode toggle.
     editModeEnabled: Boolean = false,
+    captureStance: CaptureStance = CaptureStance.BASE,
+    onCaptureStanceChange: (CaptureStance) -> Unit = {},
     overrideCount: Int = 0,
     // Existing field pins keyed by target uuid — Review already loads the full
     // list; AreaSheet only needed counts before. Enough to show "Captured:
@@ -239,6 +243,29 @@ fun AreaSheet(
                                 Text("Review → Export (${overrideCount + photoCount})", fontSize = 12.sp)
                             }
                         }
+                        // Base = foot of climb (heading kept). Top = on the
+                        // climb/anchors (GPS only — heading ignored).
+                        Text(
+                            text = "Capture coordinates from",
+                            fontSize = 11.sp,
+                            color = Color(0xFF9A5B00),
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        Row(
+                            modifier = Modifier.padding(top = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            FilterChip(
+                                selected = captureStance == CaptureStance.BASE,
+                                onClick = { onCaptureStanceChange(CaptureStance.BASE) },
+                                label = { Text("Base") },
+                            )
+                            FilterChip(
+                                selected = captureStance == CaptureStance.TOP,
+                                onClick = { onCaptureStanceChange(CaptureStance.TOP) },
+                                label = { Text("Top") },
+                            )
+                        }
                         lastCaptureFeedback?.let { feedback ->
                             val coords = formatCapturedCoordinates(feedback.lat, feedback.lng)
                             val clipboard = LocalClipboardManager.current
@@ -258,7 +285,12 @@ fun AreaSheet(
                         }
                         TextButton(onClick = onCaptureAreaPin, modifier = Modifier.padding(top = 2.dp)) {
                             Icon(Icons.Filled.MyLocation, contentDescription = null, modifier = Modifier.padding(end = 6.dp))
-                            Text("Set ${content.area.name}'s pin to my location")
+                            Text(
+                                if (captureStance == CaptureStance.TOP)
+                                    "Capture ${content.area.name} from top"
+                                else
+                                    "Capture ${content.area.name} from base",
+                            )
                         }
                         pinOverridesByUuid[content.area.uuid]?.let { CapturedCoordsLine(it) }
                         TextButton(onClick = onCaptureAreaPhoto) {
@@ -331,7 +363,10 @@ fun AreaSheet(
                             IconButton(onClick = { onCaptureClimbPin(climb) }) {
                                 Icon(
                                     Icons.Filled.MyLocation,
-                                    contentDescription = "Set ${climb.name}'s pin to my location (different face only)",
+                                    contentDescription = if (captureStance == CaptureStance.TOP)
+                                    "Capture ${climb.name} from top"
+                                else
+                                    "Capture ${climb.name} from base",
                                     tint = Color(0xFF9A5B00)
                                 )
                             }

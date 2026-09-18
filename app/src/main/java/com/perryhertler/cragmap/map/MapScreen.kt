@@ -77,6 +77,7 @@ import com.perryhertler.cragmap.data.PhotoOverrideEntity
 import com.perryhertler.cragmap.data.PhotoTargetEntity
 import com.perryhertler.cragmap.data.PhotoWithTargets
 import com.perryhertler.cragmap.data.PinOverrideDatabase
+import com.perryhertler.cragmap.data.CaptureStance
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import com.perryhertler.cragmap.data.STALE_FIX_THRESHOLD_MILLIS
 import com.perryhertler.cragmap.data.allWithTargets
@@ -195,6 +196,9 @@ fun MapScreen() {
     // the camera app takes the foreground — that was the intermittent
     // "edit mode turned itself off" bug in yard dry-run testing.
     var editModeEnabled by rememberSaveable { mutableStateOf(false) }
+    // Session-sticky Base vs Top for pin capture (top-rope days stay on Top).
+    var captureStanceStorage by rememberSaveable { mutableStateOf(CaptureStance.BASE.storageValue) }
+    val captureStance = CaptureStance.fromStorage(captureStanceStorage)
     var confirmExitEditMode by remember { mutableStateOf(false) }
     var lastCaptureFeedback by remember { mutableStateOf<CaptureFeedback?>(null) }
     var headingUpEnabled by rememberSaveable { mutableStateOf(false) }
@@ -390,10 +394,11 @@ fun MapScreen() {
         val fixAgeMillis = (SystemClock.elapsedRealtime() - location.elapsedRealtimeNanos / 1_000_000)
             .coerceAtLeast(0)
         scope.launch {
-            // One-shot compass read alongside the GPS fix — which way the phone
-            // was facing toward the wall, for telling a formation's faces apart
-            // later. Null (not a fake value) if no sensor reading arrives in time.
-            val headingDegrees = readHeadingOnce(context)
+            // Base: record compass heading (which way the wall faced).
+            // Top: standing on the climb — heading is noise; GPS alone is the pin.
+            val headingDegrees =
+                if (captureStance == CaptureStance.TOP) null else readHeadingOnce(context)
+            val accuracyMeters = if (location.hasAccuracy()) location.accuracy else null
             withContext(Dispatchers.IO) {
                 overrideDb.pinOverrideDao().upsert(
                     PinOverrideEntity(
@@ -404,7 +409,8 @@ fun MapScreen() {
                         lng = location.longitude,
                         capturedAtMillis = System.currentTimeMillis(),
                         fixAgeMillis = fixAgeMillis,
-                        headingDegrees = headingDegrees
+                        headingDegrees = headingDegrees,
+                        stance = captureStance.storageValue,
                     )
                 )
             }
@@ -413,8 +419,9 @@ fun MapScreen() {
                 targetName = targetName,
                 lat = location.latitude,
                 lng = location.longitude,
-                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                accuracyMeters = accuracyMeters,
                 fixAgeMillis = fixAgeMillis,
+                stance = captureStance,
             )
             // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
             withContext(Dispatchers.Main) {
@@ -980,6 +987,8 @@ FloatingActionButton(
                     mapLibreMap?.setPadding(0, 0, 0, 0)
                 },
                 editModeEnabled = editModeEnabled,
+                captureStance = captureStance,
+                onCaptureStanceChange = { captureStanceStorage = it.storageValue },
                 overrideCount = overrideCount,
                 pinOverridesByUuid = pinOverridesByUuid,
                 onCaptureAreaPin = { capturePin(content.area.uuid, "area", content.area.name) },
