@@ -871,10 +871,12 @@ fun MapScreen() {
         }
 
         photoTagChooser?.let { pending ->
-            // Pre-check every climb on this wall (plus the open climb if that
-            // was the shutter target) — one Save tags the usual multi-route shot.
-            val preselected = pending.candidates.map { it.uuid }.toSet() +
-                if (pending.primaryTarget.second == "climb") setOf(pending.primaryTarget.first) else emptySet()
+            // Pre-check only the climb that triggered the shutter. Sibling
+            // climbs on this leaf stay unchecked — a leaf can wrap aspects,
+            // so tagging every route would over-apply.
+            val preselected =
+                if (pending.primaryTarget.second == "climb") setOf(pending.primaryTarget.first)
+                else emptySet()
             PhotoTagSheet(
                 candidates = pending.candidates,
                 initiallySelected = preselected,
