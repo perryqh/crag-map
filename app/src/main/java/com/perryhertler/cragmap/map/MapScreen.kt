@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,11 +22,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EditLocationAlt
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.AlertDialog
@@ -44,6 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -147,6 +155,7 @@ private data class PendingPhotoTag(
     val candidates: List<ClimbEntity>
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MapScreen() {
     val context = LocalContext.current
@@ -177,6 +186,9 @@ fun MapScreen() {
     var editModeEnabled by rememberSaveable { mutableStateOf(false) }
     var confirmExitEditMode by remember { mutableStateOf(false) }
     var lastCaptureFeedback by remember { mutableStateOf<CaptureFeedback?>(null) }
+    var headingUpEnabled by rememberSaveable { mutableStateOf(false) }
+    var overflowMenuExpanded by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
     // Full pin map (not just a count) so AreaSheet can show already-captured
     // lat/lng for the open area/climbs — Review still loads its own list.
     var pinOverridesByUuid by remember { mutableStateOf<Map<String, PinOverrideEntity>>(emptyMap()) }
@@ -224,6 +236,7 @@ fun MapScreen() {
         // context: a Toast right after a withContext(IO) hop isn't reliably
         // back on a thread with a prepared Looper otherwise.
         withContext(Dispatchers.Main) {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             Toast.makeText(context, "Captured photo for $label", Toast.LENGTH_SHORT).show()
         }
     }
@@ -338,7 +351,16 @@ fun MapScreen() {
     // tool, not a live editor — the override only takes effect once exported
     // and merged into the next devils_lake.db rebuild via
     // tools/merge_pin_overrides.py.
-    fun capturePin(targetUuid: String, targetType: String, targetName: String) {
+    // North-up (NONE) vs heading-up (TRACKING_COMPASS). Puck stays COMPASS
+    // either way; only the camera follows the phone when heading-up is on.
+    LaunchedEffect(headingUpEnabled, mapLibreMap) {
+        val locationComponent = mapLibreMap?.locationComponent ?: return@LaunchedEffect
+        if (!locationComponent.isLocationComponentActivated) return@LaunchedEffect
+        locationComponent.cameraMode =
+            if (headingUpEnabled) CameraMode.TRACKING_COMPASS else CameraMode.NONE
+    }
+
+        fun capturePin(targetUuid: String, targetType: String, targetName: String) {
         val locationComponent = mapLibreMap?.locationComponent
         val location = if (locationComponent?.isLocationComponentActivated == true) {
             locationComponent.lastKnownLocation
@@ -384,6 +406,7 @@ fun MapScreen() {
             // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
             withContext(Dispatchers.Main) {
                 lastCaptureFeedback = feedback
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                 Toast.makeText(context, formatCaptureFeedbackLine(feedback), Toast.LENGTH_SHORT).show()
             }
         }
@@ -692,41 +715,70 @@ fun MapScreen() {
                 }
             }
         )
-        BadgedBox(
-            badge = {
-                val n = overrideCount + photoCount
-                if (n > 0) {
-                    Badge(
-                        modifier = Modifier.clickable {
-                            if (editModeEnabled) openOverrideReview()
-                        }
-                    ) { Text(if (n > 99) "99+" else "$n") }
-                }
-            },
-            modifier = Modifier.padding(top = 12.dp, end = 8.dp),
-        ) {
-            IconButton(
-                onClick = {
-                    when {
-                        !editModeEnabled -> editModeEnabled = true
-                        overrideCount + photoCount > 0 -> confirmExitEditMode = true
-                        else -> {
-                            editModeEnabled = false
-                            lastCaptureFeedback = null
-                        }
+        if (editModeEnabled) {
+            BadgedBox(
+                badge = {
+                    val n = overrideCount + photoCount
+                    if (n > 0) {
+                        Badge(
+                            modifier = Modifier.clickable { openOverrideReview() }
+                        ) { Text(if (n > 99) "99+" else "$n") }
                     }
                 },
+                modifier = Modifier.padding(top = 12.dp, end = 8.dp),
             ) {
-                Icon(
-                    Icons.Filled.EditLocationAlt,
-                    contentDescription = "Toggle field-survey edit mode",
-                    tint = if (editModeEnabled) Color(0xFFCF6600) else Color.Gray
-                )
+                IconButton(
+                    onClick = {
+                        when {
+                            overrideCount + photoCount > 0 -> confirmExitEditMode = true
+                            else -> {
+                                editModeEnabled = false
+                                lastCaptureFeedback = null
+                            }
+                        }
+                    },
+                ) {
+                    Icon(
+                        Icons.Filled.EditLocationAlt,
+                        contentDescription = "Exit field-survey edit mode",
+                        tint = Color(0xFFCF6600),
+                    )
+                }
+            }
+        } else {
+            // Hidden from casual browse — overflow (or long-press the GPS chip).
+            Box(modifier = Modifier.padding(top = 12.dp, end = 4.dp)) {
+                IconButton(onClick = { overflowMenuExpanded = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "More")
+                }
+                DropdownMenu(
+                    expanded = overflowMenuExpanded,
+                    onDismissRequest = { overflowMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Edit Mode (field survey)") },
+                        onClick = {
+                            overflowMenuExpanded = false
+                            editModeEnabled = true
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(if (headingUpEnabled) "North-up map" else "Heading-up map")
+                        },
+                        onClick = {
+                            overflowMenuExpanded = false
+                            headingUpEnabled = !headingUpEnabled
+                        },
+                    )
+                }
             }
         }
         }
 
         // Always-offline atlas: quiet GPS quality so cliff-base fixes aren't a surprise.
+        // Long-press enters Edit Mode (same as overflow → Edit Mode) for gloved hands.
         Text(
             text = gpsStatusLabel(gpsAccuracyM, gpsAgeMs),
             color = Color.DarkGray,
@@ -736,6 +788,15 @@ fun MapScreen() {
                 .padding(top = 72.dp)
                 .background(Color(0xCCFFFFFF), RoundedCornerShape(12.dp))
                 .padding(horizontal = 10.dp, vertical = 4.dp)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = {
+                        if (!editModeEnabled) {
+                            editModeEnabled = true
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        }
+                    },
+                ),
         )
 
         if (editModeEnabled) {
@@ -797,7 +858,24 @@ fun MapScreen() {
         // "Recenter on my location" — the location dot shows where you are, but
         // there was previously no way to actually jump the camera there. GPS
         // works via satellites, so this functions with zero cell signal.
-        FloatingActionButton(
+                FloatingActionButton(
+            onClick = {
+                headingUpEnabled = !headingUpEnabled
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 88.dp),
+            containerColor = if (headingUpEnabled) Color(0xFFCF6600) else Color.White,
+        ) {
+            Icon(
+                Icons.Filled.Navigation,
+                contentDescription = if (headingUpEnabled) "Switch to north-up map" else "Switch to heading-up map",
+                tint = if (headingUpEnabled) Color.White else Color.DarkGray,
+            )
+        }
+
+FloatingActionButton(
             onClick = {
                 val map = mapLibreMap
                 // locationComponent.lastKnownLocation throws

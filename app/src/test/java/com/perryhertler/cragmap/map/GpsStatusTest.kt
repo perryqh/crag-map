@@ -15,12 +15,26 @@ class GpsStatusTest {
     }
 
     @Test
-    fun `poor accuracy is weak`() {
-        assertEquals("Offline · GPS weak", gpsStatusLabel(45f, 1_000L))
+    fun `poor accuracy is weak with meters and wait hint`() {
+        assertEquals(
+            "Offline · GPS weak (±45m) — wait for a better fix",
+            gpsStatusLabel(45f, 1_000L),
+        )
     }
 
     @Test
-    fun `stale fix is weak`() {
-        assertEquals("Offline · GPS weak", gpsStatusLabel(8f, 60_000L))
+    fun `stale fix names age and asks to wait`() {
+        assertEquals(
+            "Offline · GPS stale (60s old) — wait for a fresher fix",
+            gpsStatusLabel(8f, 60_000L),
+        )
+    }
+
+    @Test
+    fun `weak and stale combine both reasons`() {
+        assertEquals(
+            "Offline · GPS weak (±50m, 45s old) — wait for a better fix",
+            gpsStatusLabel(50f, 45_000L),
+        )
     }
 }
