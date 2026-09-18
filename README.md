@@ -2,7 +2,8 @@
 
 An offline, zoomable climb map for Android, starting with Devils Lake State Park (WI).
 
-![Crag Atlas showing leaf-band pins and labels for a cluster of formations](docs/screenshot.png)
+<img src="docs/screenshot.png" alt="Crag Atlas showing leaf-band pins and labels for a cluster of formations" width="220">
+
 
 ## Why
 
