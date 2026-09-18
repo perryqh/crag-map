@@ -4,6 +4,9 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalClipboardManager
+import android.widget.Toast
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -109,7 +112,9 @@ fun AreaSheet(
     photoCount: Int = 0,
     onCaptureAreaPhoto: () -> Unit = {},
     onCaptureClimbPhoto: (ClimbEntity) -> Unit = {},
-    onOpenOverrideReview: () -> Unit = {}
+    onOpenOverrideReview: () -> Unit = {},
+    // Ephemeral sun-readable line after the latest pin capture (MapScreen).
+    lastCaptureFeedback: CaptureFeedback? = null,
 ) {
     // Half-expanded by default so the map (and selected pin) stay visible
     // above the sheet — full expand is still available via drag.
@@ -231,8 +236,25 @@ fun AreaSheet(
                                 onClick = onOpenOverrideReview,
                                 enabled = overrideCount > 0 || photoCount > 0
                             ) {
-                                Text("Review (${overrideCount + photoCount})", fontSize = 12.sp)
+                                Text("Review → Export (${overrideCount + photoCount})", fontSize = 12.sp)
                             }
+                        }
+                        lastCaptureFeedback?.let { feedback ->
+                            val coords = formatCapturedCoordinates(feedback.lat, feedback.lng)
+                            val clipboard = LocalClipboardManager.current
+                            val ctx = LocalContext.current
+                            Text(
+                                text = formatCaptureFeedbackLine(feedback),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF9A5B00),
+                                modifier = Modifier
+                                    .padding(top = 6.dp, bottom = 2.dp)
+                                    .clickable {
+                                        clipboard.setText(AnnotatedString(coords))
+                                        Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
+                                    },
+                            )
                         }
                         TextButton(onClick = onCaptureAreaPin, modifier = Modifier.padding(top = 2.dp)) {
                             Icon(Icons.Filled.MyLocation, contentDescription = null, modifier = Modifier.padding(end = 6.dp))

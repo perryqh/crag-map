@@ -25,6 +25,10 @@ import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -36,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -170,6 +175,8 @@ fun MapScreen() {
     // the camera app takes the foreground — that was the intermittent
     // "edit mode turned itself off" bug in yard dry-run testing.
     var editModeEnabled by rememberSaveable { mutableStateOf(false) }
+    var confirmExitEditMode by remember { mutableStateOf(false) }
+    var lastCaptureFeedback by remember { mutableStateOf<CaptureFeedback?>(null) }
     // Full pin map (not just a count) so AreaSheet can show already-captured
     // lat/lng for the open area/climbs — Review still loads its own list.
     var pinOverridesByUuid by remember { mutableStateOf<Map<String, PinOverrideEntity>>(emptyMap()) }
@@ -367,17 +374,17 @@ fun MapScreen() {
                 )
             }
             refreshPinOverrides()
+            val feedback = CaptureFeedback(
+                targetName = targetName,
+                lat = location.latitude,
+                lng = location.longitude,
+                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                fixAgeMillis = fixAgeMillis,
+            )
             // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
             withContext(Dispatchers.Main) {
-                if (fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS) {
-                    Toast.makeText(
-                        context,
-                        "Captured pin for $targetName (GPS fix is ${fixAgeMillis / 1000}s old — may be stale)",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    Toast.makeText(context, "Captured pin for $targetName", Toast.LENGTH_SHORT).show()
-                }
+                lastCaptureFeedback = feedback
+                Toast.makeText(context, formatCaptureFeedbackLine(feedback), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -685,15 +692,37 @@ fun MapScreen() {
                 }
             }
         )
-        IconButton(
-            onClick = { editModeEnabled = !editModeEnabled },
-            modifier = Modifier.padding(top = 12.dp, end = 4.dp)
+        BadgedBox(
+            badge = {
+                val n = overrideCount + photoCount
+                if (n > 0) {
+                    Badge(
+                        modifier = Modifier.clickable {
+                            if (editModeEnabled) openOverrideReview()
+                        }
+                    ) { Text(if (n > 99) "99+" else "$n") }
+                }
+            },
+            modifier = Modifier.padding(top = 12.dp, end = 8.dp),
         ) {
-            Icon(
-                Icons.Filled.EditLocationAlt,
-                contentDescription = "Toggle field-survey edit mode",
-                tint = if (editModeEnabled) Color(0xFFCF6600) else Color.Gray
-            )
+            IconButton(
+                onClick = {
+                    when {
+                        !editModeEnabled -> editModeEnabled = true
+                        overrideCount + photoCount > 0 -> confirmExitEditMode = true
+                        else -> {
+                            editModeEnabled = false
+                            lastCaptureFeedback = null
+                        }
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Filled.EditLocationAlt,
+                    contentDescription = "Toggle field-survey edit mode",
+                    tint = if (editModeEnabled) Color(0xFFCF6600) else Color.Gray
+                )
+            }
         }
         }
 
@@ -708,6 +737,23 @@ fun MapScreen() {
                 .background(Color(0xCCFFFFFF), RoundedCornerShape(12.dp))
                 .padding(horizontal = 10.dp, vertical = 4.dp)
         )
+
+        if (editModeEnabled) {
+            Text(
+                text = "EDIT",
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 100.dp)
+                    .background(Color(0xFFCF6600), RoundedCornerShape(4.dp))
+                    .clickable(enabled = overrideCount + photoCount > 0) {
+                        openOverrideReview()
+                    }
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+            )
+        }
 
         // "Near me": one on-demand GPS fix (not continuous polling — see the
         // closed corridor-survey branch this replaces), ranking formations by
@@ -819,12 +865,16 @@ fun MapScreen() {
                     val candidates = (content as? SheetContent.Climbs)?.climbs ?: emptyList()
                     capturePhoto(climb.uuid, "climb", climb.name, candidates)
                 },
-                onOpenOverrideReview = { openOverrideReview() }
+                onOpenOverrideReview = { openOverrideReview() },
+                lastCaptureFeedback = lastCaptureFeedback
             )
         }
 
         photoTagChooser?.let { pending ->
-            val preselected = if (pending.primaryTarget.second == "climb") setOf(pending.primaryTarget.first) else emptySet()
+            // Pre-check every climb on this wall (plus the open climb if that
+            // was the shutter target) — one Save tags the usual multi-route shot.
+            val preselected = pending.candidates.map { it.uuid }.toSet() +
+                if (pending.primaryTarget.second == "climb") setOf(pending.primaryTarget.first) else emptySet()
             PhotoTagSheet(
                 candidates = pending.candidates,
                 initiallySelected = preselected,
@@ -854,6 +904,31 @@ fun MapScreen() {
                     overridesForReview = null
                     photosForReview = null
                 }
+            )
+        }
+
+        if (confirmExitEditMode) {
+            AlertDialog(
+                onDismissRequest = { confirmExitEditMode = false },
+                title = { Text("Leave Edit Mode?") },
+                text = {
+                    Text(
+                        "You have ${overrideCount + photoCount} captured pin(s)/photo(s) on this phone. " +
+                            "They stay until you Review → Export (or delete). Turn Edit Mode off anyway?"
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            editModeEnabled = false
+                            confirmExitEditMode = false
+                            lastCaptureFeedback = null
+                        }
+                    ) { Text("Turn off") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmExitEditMode = false }) { Text("Keep editing") }
+                },
             )
         }
     }

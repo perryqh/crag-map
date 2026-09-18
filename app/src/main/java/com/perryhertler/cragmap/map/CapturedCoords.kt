@@ -37,7 +37,7 @@ fun formatCapturedPinLine(override: PinOverrideEntity): String {
 fun CapturedCoordsLine(
     override: PinOverrideEntity,
     modifier: Modifier = Modifier,
-    color: Color = Color(0xFF9A5B00)
+    color: Color = Color(0xFF9A5B00),
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -49,6 +49,26 @@ fun CapturedCoordsLine(
         modifier = modifier.clickable {
             clipboard.setText(AnnotatedString(coords))
             Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
-        }
+        },
     )
+}
+
+/** Ephemeral on-sheet feedback after a pin capture (not persisted). */
+data class CaptureFeedback(
+    val targetName: String,
+    val lat: Double,
+    val lng: Double,
+    val accuracyMeters: Float?,
+    val fixAgeMillis: Long,
+)
+
+/**
+ * Sun-readable capture line: "Captured Target · lat, lng · ±8 m · 12s old".
+ * Accuracy omitted when the location provider didn't report it.
+ */
+fun formatCaptureFeedbackLine(feedback: CaptureFeedback): String {
+    val coords = formatCapturedCoordinates(feedback.lat, feedback.lng)
+    val accuracy = feedback.accuracyMeters?.let { " · ±${it.roundToInt()} m" }.orEmpty()
+    val ageSec = (feedback.fixAgeMillis / 1000L).coerceAtLeast(0)
+    return "Captured ${feedback.targetName} · $coords$accuracy · ${ageSec}s old"
 }
