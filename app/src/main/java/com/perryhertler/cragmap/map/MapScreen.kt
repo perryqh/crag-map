@@ -589,6 +589,12 @@ fun MapScreen() {
         if (style != null) {
             applyBasemapVisibility(style, mapSettings.basemap)
             mapLibreMap?.setMaxZoomPreference(mapSettings.basemap.maxZoom)
+            // Re-assert selection ring after raster swap (layer remove/add can drop
+            // transient geojson state on some devices).
+            val selected = sheetContent?.area
+            if (selected?.lat != null && selected.lng != null) {
+                setHighlight(style, selected.lat, selected.lng)
+            }
         }
         if (!mapSettings.showPuckLabels) {
             mapLabels = emptyList()
@@ -1160,18 +1166,45 @@ private fun buildBaseStyle(context: Context): Style.Builder {
         minZoom = 13f
         maxZoom = 16f
     }
+    // Both raster sources stay registered; only ONE RasterLayer is live at a time
+    // (see applyBasemapVisibility). Keeping both layers and toggling visibility left
+    // the gold selection ring visibly offset from pin circles on Topo on Pixel /
+    // PowerVR — same class of GPU glitch that broke CircleLayer+SymbolLayer earlier.
     return Style.Builder()
         .withSource(RasterSource("basemap-imagery", imageryTiles, 256))
-        .withLayer(RasterLayer("basemap-imagery-layer", "basemap-imagery"))
         .withSource(RasterSource("basemap-topo", topoTiles, 256))
-        .withLayer(RasterLayer("basemap-topo-layer", "basemap-topo"))
+        .withLayer(RasterLayer(BASEMAP_IMAGERY_LAYER_ID, "basemap-imagery"))
 }
 
+private const val BASEMAP_IMAGERY_LAYER_ID = "basemap-imagery-layer"
+private const val BASEMAP_TOPO_LAYER_ID = "basemap-topo-layer"
+private const val FIRST_PIN_LAYER_ID = "park-circle"
+
+/**
+ * Swap which basemap RasterLayer is in the style so only one raster is composited
+ * under the pin/highlight CircleLayers. Always insert below [FIRST_PIN_LAYER_ID].
+ */
 private fun applyBasemapVisibility(style: Style, basemap: Basemap) {
-    val imageryVisible = if (basemap == Basemap.IMAGERY) Property.VISIBLE else Property.NONE
-    val topoVisible = if (basemap == Basemap.TOPO) Property.VISIBLE else Property.NONE
-    style.getLayer("basemap-imagery-layer")?.setProperties(PropertyFactory.visibility(imageryVisible))
-    style.getLayer("basemap-topo-layer")?.setProperties(PropertyFactory.visibility(topoVisible))
+    when (basemap) {
+        Basemap.IMAGERY -> {
+            style.getLayer(BASEMAP_TOPO_LAYER_ID)?.let { style.removeLayer(it) }
+            if (style.getLayer(BASEMAP_IMAGERY_LAYER_ID) == null) {
+                style.addLayerBelow(
+                    RasterLayer(BASEMAP_IMAGERY_LAYER_ID, "basemap-imagery"),
+                    FIRST_PIN_LAYER_ID,
+                )
+            }
+        }
+        Basemap.TOPO -> {
+            style.getLayer(BASEMAP_IMAGERY_LAYER_ID)?.let { style.removeLayer(it) }
+            if (style.getLayer(BASEMAP_TOPO_LAYER_ID) == null) {
+                style.addLayerBelow(
+                    RasterLayer(BASEMAP_TOPO_LAYER_ID, "basemap-topo"),
+                    FIRST_PIN_LAYER_ID,
+                )
+            }
+        }
+    }
 }
 
 private fun addAreaLayer(
