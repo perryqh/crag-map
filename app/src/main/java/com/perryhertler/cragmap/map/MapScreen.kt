@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -790,8 +792,8 @@ fun MapScreen() {
                         .padding(2.dp),
                 ) {
                     Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = "More",
+                        Icons.Filled.Settings,
+                        contentDescription = "Settings and more",
                         tint = Color(0xFF1F2328),
                     )
                 }
@@ -807,16 +809,7 @@ fun MapScreen() {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
                     )
-                    DropdownMenuItem(
-                        text = {
-                            Text(if (headingUpEnabled) "North-up map" else "Heading-up map")
-                        },
-                        onClick = {
-                            overflowMenuExpanded = false
-                            headingUpEnabled = !headingUpEnabled
-                        },
-                    )
-                    DropdownMenuItem(
+DropdownMenuItem(
                         text = { Text("Settings") },
                         onClick = {
                             overflowMenuExpanded = false
@@ -903,7 +896,7 @@ fun MapScreen() {
                 .align(Alignment.BottomStart)
                 .padding(16.dp)
         ) {
-            Icon(Icons.Filled.NearMe, contentDescription = "What's near me")
+            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "What's near me")
         }
 
         // "Recenter on my location" — the location dot shows where you are, but
