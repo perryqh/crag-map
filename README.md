@@ -2,6 +2,8 @@
 
 An offline, zoomable climb map for Android, starting with Devils Lake State Park (WI).
 
+![Crag Atlas showing leaf-band pins and labels for a cluster of formations](docs/screenshot.png)
+
 ## Why
 
 Mountain Project chunks a climbing area into disconnected per-wall pages (e.g. "Devils Lake E Bluff - E Rampart") with no way to see how areas relate to each other spatially, and no offline story. Devils Lake's East Bluff has no cell service.
