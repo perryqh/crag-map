@@ -10,10 +10,13 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +29,8 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -34,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -78,6 +84,10 @@ import com.perryhertler.cragmap.data.deletePhotoAndTargets
 import com.perryhertler.cragmap.data.overridesToJson
 import com.perryhertler.cragmap.data.photoOverridesToJson
 import com.perryhertler.cragmap.search.SearchBar
+import com.perryhertler.cragmap.settings.Basemap
+import com.perryhertler.cragmap.settings.MapSettings
+import com.perryhertler.cragmap.settings.loadMapSettings
+import com.perryhertler.cragmap.settings.saveMapSettings
 import com.perryhertler.cragmap.search.SearchResultItem
 import java.io.File
 import java.util.zip.ZipEntry
@@ -95,6 +105,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.sources.GeoJsonSource
@@ -188,6 +199,8 @@ fun MapScreen() {
     var lastCaptureFeedback by remember { mutableStateOf<CaptureFeedback?>(null) }
     var headingUpEnabled by rememberSaveable { mutableStateOf(false) }
     var overflowMenuExpanded by remember { mutableStateOf(false) }
+    var mapSettings by remember { mutableStateOf(loadMapSettings(context)) }
+    var settingsDialogOpen by remember { mutableStateOf(false) }
     val haptics = LocalHapticFeedback.current
     // Full pin map (not just a count) so AreaSheet can show already-captured
     // lat/lng for the open area/climbs — Review still loads its own list.
@@ -570,6 +583,20 @@ fun MapScreen() {
         mapLabels = result
     }
 
+    LaunchedEffect(mapSettings) {
+        saveMapSettings(context, mapSettings)
+        val style = loadedStyle
+        if (style != null) {
+            applyBasemapVisibility(style, mapSettings.basemap)
+            mapLibreMap?.setMaxZoomPreference(mapSettings.basemap.maxZoom)
+        }
+        if (!mapSettings.showPuckLabels) {
+            mapLabels = emptyList()
+        } else {
+            mapLibreMap?.let { m -> mapView.let { mv -> refreshLabels(m, mv) } }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             factory = { mapView },
@@ -586,6 +613,8 @@ fun MapScreen() {
             if (mapLibreMap == null) mv.getMapAsync { map ->
                 Log.d("CragMap", "getMapAsync fired, map=$map")
                 mapLibreMap = map
+                map.setMinZoomPreference(13.0)
+                map.setMaxZoomPreference(18.0)
                 map.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
                     .target(DEVILS_LAKE_CENTER)
                     .zoom(INITIAL_ZOOM)
@@ -621,6 +650,8 @@ fun MapScreen() {
                         map.setStyle(builder) { style ->
                             Log.d("CragMap", "style loaded, fully loaded=${style.isFullyLoaded}, layers=${style.layers.map { it.id }}")
                             loadedStyle = style
+                            applyBasemapVisibility(style, mapSettings.basemap)
+                            map.setMaxZoomPreference(mapSettings.basemap.maxZoom)
                             if (locationPermissionGranted) enableLocationComponent(context, map, style)
                             refreshLabels(map, mv)
                         }
@@ -629,7 +660,9 @@ fun MapScreen() {
                     }
                 }
 
-                map.addOnCameraIdleListener { refreshLabels(map, mv) }
+                map.addOnCameraIdleListener {
+                    if (mapSettings.showPuckLabels) refreshLabels(map, mv) else mapLabels = emptyList()
+                }
 
                 map.addOnMapClickListener { latLng ->
                     val point = map.projection.toScreenLocation(latLng)
@@ -651,7 +684,7 @@ fun MapScreen() {
             }
         }
 
-        mapLabels.forEach { label ->
+        if (mapSettings.showPuckLabels) mapLabels.forEach { label ->
             Text(
                 text = label.text,
                 fontSize = 11.sp,
@@ -725,7 +758,7 @@ fun MapScreen() {
                         ) { Text(if (n > 99) "99+" else "$n") }
                     }
                 },
-                modifier = Modifier.padding(top = 12.dp, end = 8.dp),
+                modifier = Modifier.padding(top = 8.dp, end = 8.dp),
             ) {
                 IconButton(
                     onClick = {
@@ -737,6 +770,9 @@ fun MapScreen() {
                             }
                         }
                     },
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.95f), CircleShape)
+                        .padding(2.dp),
                 ) {
                     Icon(
                         Icons.Filled.EditLocationAlt,
@@ -746,10 +782,20 @@ fun MapScreen() {
                 }
             }
         } else {
-            // Hidden from casual browse — overflow (or long-press the GPS chip).
-            Box(modifier = Modifier.padding(top = 12.dp, end = 4.dp)) {
-                IconButton(onClick = { overflowMenuExpanded = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "More")
+            // Overflow for Edit / heading / Settings. White chip so the ⋮ stays
+            // visible on both Imagery and Topo (bare IconButton washed out on aerial).
+            Box(modifier = Modifier.padding(top = 8.dp, end = 8.dp)) {
+                IconButton(
+                    onClick = { overflowMenuExpanded = true },
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.95f), CircleShape)
+                        .padding(2.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Settings,
+                        contentDescription = "Settings and more",
+                        tint = Color(0xFF1F2328),
+                    )
                 }
                 DropdownMenu(
                     expanded = overflowMenuExpanded,
@@ -763,13 +809,11 @@ fun MapScreen() {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         },
                     )
-                    DropdownMenuItem(
-                        text = {
-                            Text(if (headingUpEnabled) "North-up map" else "Heading-up map")
-                        },
+DropdownMenuItem(
+                        text = { Text("Settings") },
                         onClick = {
                             overflowMenuExpanded = false
-                            headingUpEnabled = !headingUpEnabled
+                            settingsDialogOpen = true
                         },
                     )
                 }
@@ -852,7 +896,7 @@ fun MapScreen() {
                 .align(Alignment.BottomStart)
                 .padding(16.dp)
         ) {
-            Icon(Icons.Filled.NearMe, contentDescription = "What's near me")
+            Icon(Icons.Filled.Place, contentDescription = "What's near me")
         }
 
         // "Recenter on my location" — the location dot shows where you are, but
@@ -987,6 +1031,56 @@ FloatingActionButton(
             )
         }
 
+
+        if (settingsDialogOpen) {
+            AlertDialog(
+                onDismissRequest = { settingsDialogOpen = false },
+                title = { Text("Map settings") },
+                text = {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Hockey-puck labels")
+                            Switch(
+                                checked = mapSettings.showPuckLabels,
+                                onCheckedChange = {
+                                    mapSettings = mapSettings.copy(showPuckLabels = it)
+                                },
+                            )
+                        }
+                        Text(
+                            text = "Basemap",
+                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.RadioButton(
+                                selected = mapSettings.basemap == Basemap.IMAGERY,
+                                onClick = { mapSettings = mapSettings.copy(basemap = Basemap.IMAGERY) },
+                            )
+                            Text("Imagery (aerial + NAIP)", modifier = Modifier.clickable {
+                                mapSettings = mapSettings.copy(basemap = Basemap.IMAGERY)
+                            })
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.RadioButton(
+                                selected = mapSettings.basemap == Basemap.TOPO,
+                                onClick = { mapSettings = mapSettings.copy(basemap = Basemap.TOPO) },
+                            )
+                            Text("Topo (USGS contours)", modifier = Modifier.clickable {
+                                mapSettings = mapSettings.copy(basemap = Basemap.TOPO)
+                            })
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { settingsDialogOpen = false }) { Text("Done") }
+                },
+            )
+        }
+
         if (confirmExitEditMode) {
             AlertDialog(
                 onDismissRequest = { confirmExitEditMode = false },
@@ -1058,16 +1152,26 @@ private fun enableLocationComponent(context: Context, map: MapLibreMap, style: S
 
 private fun buildBaseStyle(context: Context): Style.Builder {
     val port = (context.applicationContext as CragMapApplication).tileServerPort
-    val tileUrl = "http://127.0.0.1:$port/tiles/{z}/{x}/{y}.jpg"
-    val tileSet = TileSet("2.1.0", tileUrl).apply {
+    val imageryTiles = TileSet("2.1.0", "http://127.0.0.1:$port/tiles/imagery/{z}/{x}/{y}.jpg").apply {
+        minZoom = 13f
+        maxZoom = 18f
+    }
+    val topoTiles = TileSet("2.1.0", "http://127.0.0.1:$port/tiles/topo/{z}/{x}/{y}.jpg").apply {
         minZoom = 13f
         maxZoom = 16f
     }
-    val rasterSource = RasterSource("usgs-topo", tileSet, 256)
-    val rasterLayer = RasterLayer("usgs-topo-layer", "usgs-topo")
     return Style.Builder()
-        .withSource(rasterSource)
-        .withLayer(rasterLayer)
+        .withSource(RasterSource("basemap-imagery", imageryTiles, 256))
+        .withLayer(RasterLayer("basemap-imagery-layer", "basemap-imagery"))
+        .withSource(RasterSource("basemap-topo", topoTiles, 256))
+        .withLayer(RasterLayer("basemap-topo-layer", "basemap-topo"))
+}
+
+private fun applyBasemapVisibility(style: Style, basemap: Basemap) {
+    val imageryVisible = if (basemap == Basemap.IMAGERY) Property.VISIBLE else Property.NONE
+    val topoVisible = if (basemap == Basemap.TOPO) Property.VISIBLE else Property.NONE
+    style.getLayer("basemap-imagery-layer")?.setProperties(PropertyFactory.visibility(imageryVisible))
+    style.getLayer("basemap-topo-layer")?.setProperties(PropertyFactory.visibility(topoVisible))
 }
 
 private fun addAreaLayer(
