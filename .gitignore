@@ -9,3 +9,6 @@ captures/
 __pycache__/
 .blueprint/
 .icon-staging/
+keystore.properties
+*.jks
+*.keystore
