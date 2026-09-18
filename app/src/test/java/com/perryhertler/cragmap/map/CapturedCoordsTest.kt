@@ -30,7 +30,7 @@ class CapturedCoordsTest {
             capturedAtMillis = 1,
             headingDegrees = 182.4f,
         )
-        assertEquals("Captured: 43.058493, -88.157804 · 182°", formatCapturedPinLine(o))
+        assertEquals("Captured (Base): 43.058493, -88.157804 · 182°", formatCapturedPinLine(o))
     }
 
     @Test
@@ -44,7 +44,7 @@ class CapturedCoordsTest {
             capturedAtMillis = 1,
             headingDegrees = null,
         )
-        assertEquals("Captured: 43.000000, -89.000000", formatCapturedPinLine(o))
+        assertEquals("Captured (Base): 43.000000, -89.000000", formatCapturedPinLine(o))
     }
 
     @Test
@@ -57,7 +57,7 @@ class CapturedCoordsTest {
             fixAgeMillis = 12_400L,
         )
         assertEquals(
-            "Captured Hawk's Nest · 43.058493, -88.157804 · ±8 m · 12s old",
+            "Captured Hawk's Nest (Base) · 43.058493, -88.157804 · ±8 m · 12s old",
             formatCaptureFeedbackLine(f),
         )
     }
@@ -72,8 +72,23 @@ class CapturedCoordsTest {
             fixAgeMillis = 500L,
         )
         assertEquals(
-            "Captured Route · 43.000000, -89.000000 · 0s old",
+            "Captured Route (Base) · 43.000000, -89.000000 · 0s old",
             formatCaptureFeedbackLine(f),
         )
+    }
+
+    @Test
+    fun `captured pin line shows Top and hides heading`() {
+        val o = PinOverrideEntity(
+            targetUuid = "u1",
+            targetType = "climb",
+            targetName = "Route",
+            lat = 43.0,
+            lng = -89.0,
+            capturedAtMillis = 1,
+            headingDegrees = 90f,
+            stance = "top",
+        )
+        assertEquals("Captured (Top): 43.000000, -89.000000", formatCapturedPinLine(o))
     }
 }

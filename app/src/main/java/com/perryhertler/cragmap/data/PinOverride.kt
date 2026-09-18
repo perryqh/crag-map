@@ -43,8 +43,25 @@ data class PinOverrideEntity(
     // Compass heading (0-360, 0=north) the phone was facing at capture time —
     // which way the wall was, for telling a formation's faces apart later.
     // Null if no rotation sensor reading arrived in time (see readHeadingOnce).
-    val headingDegrees: Float? = null
+    val headingDegrees: Float? = null,
+    // Where the surveyor stood: "base" (default, foot of the climb/wall) or
+    // "top" (clifftop / top-rope anchor). Top captures skip compass heading —
+    // the phone is the GPS puck, not an orientation cue. Kept in the export so
+    // desk merge / future climb-scoped features know which end was surveyed.
+    val stance: String = "base"
 )
+
+/** Where a pin was captured from. Stored as [storageValue] on the entity/JSON. */
+enum class CaptureStance(val storageValue: String, val label: String) {
+    BASE("base", "Base"),
+    TOP("top", "Top");
+
+    companion object {
+        fun fromStorage(raw: String?): CaptureStance =
+            entries.firstOrNull { it.storageValue == raw } ?: BASE
+    }
+}
+
 
 @Dao
 interface PinOverrideDao {
@@ -133,7 +150,7 @@ suspend fun PhotoOverrideDao.allWithTargets(): List<PhotoWithTargets> {
 
 @Database(
     entities = [PinOverrideEntity::class, PhotoOverrideEntity::class, PhotoTargetEntity::class],
-    version = 4,
+    version = 5,
     // Exported under app/schemas/ so MigrationTestHelper can validate upgrades
     // and so future schema bumps have a checked-in baseline to migrate from.
     exportSchema = true
@@ -176,7 +193,8 @@ fun overridesToJson(overrides: List<PinOverrideEntity>): String {
             """"lat":${o.lat},"lng":${o.lng},""" +
             """"capturedAtMillis":${o.capturedAtMillis},""" +
             """"fixAgeMillis":${o.fixAgeMillis},""" +
-            """"headingDegrees":${o.headingDegrees ?: "null"}}"""
+            """"headingDegrees":${o.headingDegrees ?: "null"},""" +
+            """"stance":"${jsonEscape(o.stance)}"}"""
     }
     return "[$items]"
 }

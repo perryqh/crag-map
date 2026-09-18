@@ -60,5 +60,14 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     }
 }
 
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // v5: base vs top capture stance (default base for existing rows).
+        db.execSQL(
+            "ALTER TABLE pin_override ADD COLUMN stance TEXT NOT NULL DEFAULT 'base'"
+        )
+    }
+}
+
 /** All known PinOverrideDatabase migrations, newest last. */
-val PIN_OVERRIDE_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+val PIN_OVERRIDE_MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)

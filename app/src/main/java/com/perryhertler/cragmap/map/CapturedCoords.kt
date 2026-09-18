@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.sp
+import com.perryhertler.cragmap.data.CaptureStance
 import com.perryhertler.cragmap.data.PinOverrideEntity
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -25,8 +26,11 @@ fun formatCapturedCoordinates(lat: Double, lng: Double): String =
 /** One-line Edit Mode summary: "Captured: lat, lng" plus optional heading. */
 fun formatCapturedPinLine(override: PinOverrideEntity): String {
     val coords = formatCapturedCoordinates(override.lat, override.lng)
-    val heading = override.headingDegrees?.let { " · ${it.roundToInt()}°" }.orEmpty()
-    return "Captured: $coords$heading"
+    val stance = CaptureStance.fromStorage(override.stance)
+    val heading =
+        if (stance == CaptureStance.TOP) ""
+        else override.headingDegrees?.let { " · ${it.roundToInt()}°" }.orEmpty()
+    return "Captured (${stance.label}): $coords$heading"
 }
 
 /**
@@ -60,6 +64,7 @@ data class CaptureFeedback(
     val lng: Double,
     val accuracyMeters: Float?,
     val fixAgeMillis: Long,
+    val stance: CaptureStance = CaptureStance.BASE,
 )
 
 /**
@@ -70,5 +75,5 @@ fun formatCaptureFeedbackLine(feedback: CaptureFeedback): String {
     val coords = formatCapturedCoordinates(feedback.lat, feedback.lng)
     val accuracy = feedback.accuracyMeters?.let { " · ±${it.roundToInt()} m" }.orEmpty()
     val ageSec = (feedback.fixAgeMillis / 1000L).coerceAtLeast(0)
-    return "Captured ${feedback.targetName} · $coords$accuracy · ${ageSec}s old"
+    return "Captured ${feedback.targetName} (${feedback.stance.label}) · $coords$accuracy · ${ageSec}s old"
 }
