@@ -170,7 +170,10 @@ fun MapScreen() {
     // the camera app takes the foreground — that was the intermittent
     // "edit mode turned itself off" bug in yard dry-run testing.
     var editModeEnabled by rememberSaveable { mutableStateOf(false) }
-    var overrideCount by remember { mutableStateOf(0) }
+    // Full pin map (not just a count) so AreaSheet can show already-captured
+    // lat/lng for the open area/climbs — Review still loads its own list.
+    var pinOverridesByUuid by remember { mutableStateOf<Map<String, PinOverrideEntity>>(emptyMap()) }
+    val overrideCount = pinOverridesByUuid.size
     var overridesForReview by remember { mutableStateOf<List<PinOverrideEntity>?>(null) }
     // Photo capture (same Edit Mode gating as pins, same PinOverrideDatabase —
     // see the blueprint's "make photos available" thread). Multiple photos per
@@ -178,8 +181,13 @@ fun MapScreen() {
     // per-target upsert.
     var photoCount by remember { mutableStateOf(0) }
     var photosForReview by remember { mutableStateOf<List<PhotoWithTargets>?>(null) }
+    suspend fun refreshPinOverrides() {
+        pinOverridesByUuid = withContext(Dispatchers.IO) {
+            overrideDb.pinOverrideDao().all().associateBy { it.targetUuid }
+        }
+    }
     LaunchedEffect(Unit) {
-        overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
+        refreshPinOverrides()
         photoCount = withContext(Dispatchers.IO) { overrideDb.photoOverrideDao().allPhotos().size }
     }
     // Holds the destination file + trigger info for a capture in flight
@@ -358,7 +366,7 @@ fun MapScreen() {
                     )
                 )
             }
-            overrideCount = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all().size }
+            refreshPinOverrides()
             // Explicit Main dispatch — see saveCapturedPhoto's comment on why.
             withContext(Dispatchers.Main) {
                 if (fixAgeMillis > STALE_FIX_THRESHOLD_MILLIS) {
@@ -401,7 +409,7 @@ fun MapScreen() {
         scope.launch {
             withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().delete(o.targetUuid) }
             overridesForReview = withContext(Dispatchers.IO) { overrideDb.pinOverrideDao().all() }
-            overrideCount = overridesForReview?.size ?: 0
+            refreshPinOverrides()
         }
     }
 
@@ -799,6 +807,7 @@ fun MapScreen() {
                 },
                 editModeEnabled = editModeEnabled,
                 overrideCount = overrideCount,
+                pinOverridesByUuid = pinOverridesByUuid,
                 onCaptureAreaPin = { capturePin(content.area.uuid, "area", content.area.name) },
                 onCaptureClimbPin = { climb: ClimbEntity -> capturePin(climb.uuid, "climb", climb.name) },
                 photoCount = photoCount,
