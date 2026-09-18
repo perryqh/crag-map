@@ -263,15 +263,23 @@ fun MapScreen() {
     }
 
     // Opens the sheet for one area — climbs if it's a formation, its children
-    // (in cliff order) if it's a disclosure node — sets the map highlight, and
-    // flies the camera to the area when lat/lng are present. Shared by the
-    // map's own tap handler, tapping a label, search selection, Near Me,
-    // prev/next, and tapping a child row in the sheet itself, so all of them
-    // stay identical by construction.
+    // (in cliff order) if it's a disclosure node — and sets the map highlight.
+    // Shared by the map's own tap handler, tapping a label, search selection,
+    // Near Me, prev/next, and tapping a child row in the sheet itself, so all
+    // of them stay identical by construction.
+    //
+    // flyCamera defaults to false — opt IN, not opt out. Tapping something
+    // already visible on screen (a pin, a label, a child row) shouldn't move
+    // the camera at all; forcing a fixed-zoom-band fly on every such tap was
+    // exactly the regression this default caused (it snapped zoom back out
+    // from under a climber who'd zoomed in to tell two close pins apart).
+    // Only pass true where the target genuinely isn't already in view — Near
+    // Me is the real case; callers that already fly the camera themselves
+    // (search) don't need this at all.
     fun selectArea(
         area: AreaEntity,
         highlightedClimbUuid: String? = null,
-        flyCamera: Boolean = true,
+        flyCamera: Boolean = false,
     ) {
         if (area.lat != null && area.lng != null) {
             loadedStyle?.let { setHighlight(it, area.lat, area.lng) }
@@ -297,7 +305,11 @@ fun MapScreen() {
         val newIdx = idx + offset
         if (newIdx !in content.siblings.indices) return
         val target = content.siblings[newIdx]
-        // Camera fly lives in selectArea (with leaf/intermediate zoom).
+        // Pan only, zoom untouched — paging through siblings shouldn't reset
+        // whatever zoom the climber is already looking at.
+        if (target.lat != null && target.lng != null) {
+            mapLibreMap?.easeCamera(CameraUpdateFactory.newLatLng(LatLng(target.lat, target.lng)), 400)
+        }
         selectArea(target)
     }
 
@@ -634,7 +646,7 @@ fun MapScreen() {
                         scope.launch {
                             try {
                                 val area = withContext(Dispatchers.IO) { db.areaDao().getArea(result.areaUuid) }
-                                if (area != null) selectArea(area, highlightedClimbUuid = result.uuid, flyCamera = false)
+                                if (area != null) selectArea(area, highlightedClimbUuid = result.uuid)
                             } catch (e: Exception) {
                                 Log.e("CragMap", "failed to open sheet for search climb result", e)
                             }
@@ -642,6 +654,13 @@ fun MapScreen() {
                     }
                     is SearchResultItem.Area -> {
                         val result = item.result
+                        // Fly off the search result's own coordinates, synchronously —
+                        // not dependent on the DB lookup below, which only builds the
+                        // sheet content and may fail/return null independently.
+                        if (result.lat != null && result.lng != null) {
+                            flyTo(result.lat, result.lng, zoomForSelectedArea(result.isLeaf))
+                            loadedStyle?.let { setHighlight(it, result.lat, result.lng) }
+                        }
                         scope.launch {
                             try {
                                 val area = withContext(Dispatchers.IO) { db.areaDao().getArea(result.uuid) }
@@ -735,7 +754,9 @@ fun MapScreen() {
         nearMeResults?.let { results ->
             NearMePanel(
                 results = results,
-                onSelect = { nearby -> selectArea(nearby.area) },
+                // The one legitimate case for flyCamera=true: a Near Me result
+                // isn't necessarily anywhere near what's currently on screen.
+                onSelect = { nearby -> selectArea(nearby.area, flyCamera = true) },
                 onDismiss = { nearMeResults = null },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
