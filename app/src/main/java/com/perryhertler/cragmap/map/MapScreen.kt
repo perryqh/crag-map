@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -755,7 +756,7 @@ fun MapScreen() {
                         ) { Text(if (n > 99) "99+" else "$n") }
                     }
                 },
-                modifier = Modifier.padding(top = 12.dp, end = 8.dp),
+                modifier = Modifier.padding(top = 8.dp, end = 8.dp),
             ) {
                 IconButton(
                     onClick = {
@@ -767,6 +768,9 @@ fun MapScreen() {
                             }
                         }
                     },
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.95f), CircleShape)
+                        .padding(2.dp),
                 ) {
                     Icon(
                         Icons.Filled.EditLocationAlt,
@@ -776,10 +780,20 @@ fun MapScreen() {
                 }
             }
         } else {
-            // Hidden from casual browse — overflow (or long-press the GPS chip).
-            Box(modifier = Modifier.padding(top = 12.dp, end = 4.dp)) {
-                IconButton(onClick = { overflowMenuExpanded = true }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "More")
+            // Overflow for Edit / heading / Settings. White chip so the ⋮ stays
+            // visible on both Imagery and Topo (bare IconButton washed out on aerial).
+            Box(modifier = Modifier.padding(top = 8.dp, end = 8.dp)) {
+                IconButton(
+                    onClick = { overflowMenuExpanded = true },
+                    modifier = Modifier
+                        .background(Color.White.copy(alpha = 0.95f), CircleShape)
+                        .padding(2.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "More",
+                        tint = Color(0xFF1F2328),
+                    )
                 }
                 DropdownMenu(
                     expanded = overflowMenuExpanded,
