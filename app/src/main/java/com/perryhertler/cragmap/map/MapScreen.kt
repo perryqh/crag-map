@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.NearMe
-import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -896,7 +896,7 @@ DropdownMenuItem(
                 .align(Alignment.BottomStart)
                 .padding(16.dp)
         ) {
-            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "What's near me")
+            Icon(Icons.Filled.Place, contentDescription = "What's near me")
         }
 
         // "Recenter on my location" — the location dot shows where you are, but
