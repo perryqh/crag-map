@@ -1062,10 +1062,9 @@ private fun buildBaseStyle(context: Context): Style.Builder {
     val port = (context.applicationContext as CragMapApplication).tileServerPort
     val tileUrl = "http://127.0.0.1:$port/tiles/{z}/{x}/{y}.jpg"
     val tileSet = TileSet("2.1.0", tileUrl).apply {
-        // Native ImageryTopo tiles exist through z16 for Devil's Lake; camera
-        // max zoom (setMaxZoomPreference) may go higher so MapLibre overzooms.
+        // ImageryTopo z13–16 + NAIP z17–18 in the same MBTiles pack.
         minZoom = 13f
-        maxZoom = 16f
+        maxZoom = 18f
     }
     val rasterSource = RasterSource("usgs-topo", tileSet, 256)
     val rasterLayer = RasterLayer("usgs-topo-layer", "usgs-topo")

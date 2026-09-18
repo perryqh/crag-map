@@ -14,7 +14,7 @@ Crag Map instead renders every climb as a pin on a single pannable, zoomable top
 ## How it's built
 
 - **Data**: [OpenBeta](https://openbeta.io)'s public GraphQL API — CC0-licensed, community-maintained climbing data. `tools/openbeta_export.py` recursively walks an area's tree (region → bluff → sub-area → formation → route) and writes a SQLite database matching the Android app's Room schema.
-- **Basemap**: USGS ImageryTopo raster tiles (public domain aerial + contours). Native tiles through z16; the map may overzoom past that. `tools/build_mbtiles.py` fetches tiles for a bounding box/zoom range into a standard MBTiles package.
+- **Basemap**: USGS ImageryTopo (z13–16) plus USDA/USGS NAIP aerial (z17–18), public domain, bundled offline. Cliff-base zoom uses real NAIP tiles, not stretched ImageryTopo. `tools/build_mbtiles.py` fetches tiles for a bounding box/zoom range into a standard MBTiles package.
 - **App**: Kotlin + Jetpack Compose, [MapLibre Native](https://maplibre.org/) for the map, Room for the on-device database (bundled as a prepopulated asset), and a small embedded HTTP server that serves tiles out of the bundled MBTiles file to MapLibre's raster source. Zoom-tiered pin layers are keyed off each area's tree depth, not hardcoded to a specific park's hierarchy shape — a differently-shaped crag needs no schema or code changes, just a re-run of the two export scripts with a different root UUID and bounding box.
 - **No INTERNET permission, anywhere.** Everything the app shows — map tiles, climb data, photos — ships bundled or gets merged into a bundle at build time. Nothing is fetched or uploaded live from the phone.
 
