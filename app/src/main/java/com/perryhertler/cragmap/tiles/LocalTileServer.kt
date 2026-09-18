@@ -9,36 +9,41 @@ import java.io.File
 import java.io.FileOutputStream
 
 /**
- * Serves tiles out of a bundled MBTiles (SQLite) file over 127.0.0.1, so
- * MapLibre's URL-template raster source can read a pre-built local tile
- * package. MapLibre's own OfflineManager/OfflineRegion API expects a live
- * style URL and doesn't fit "install a file I built myself" — see the
- * blueprint's "Serving the MBTiles to MapLibre" section for why this exists.
+ * Serves tiles out of bundled MBTiles packs over 127.0.0.1 so MapLibre's
+ * URL-template raster sources can read offline packages.
+ *
+ * Paths:
+ *   /tiles/imagery/{z}/{x}/{y}.jpg  — USGS ImageryTopo + NAIP (z13–18)
+ *   /tiles/topo/{z}/{x}/{y}.jpg     — USGS Topo (z13–16)
+ *
+ * Legacy /tiles/{z}/{x}/{y}.jpg still maps to imagery.
  */
 class LocalTileServer(private val context: Context, listenPort: Int = 8085) : NanoHTTPD(listenPort) {
 
-    private val db: SQLiteDatabase by lazy {
-        val dest = File(context.filesDir, "devils_lake.mbtiles")
-        // Same class of bug the Room database hit: copying only "if it doesn't
-        // already exist" means a rebuilt/updated bundled asset (new bbox, more
-        // tiles, etc.) never reaches an existing install — the internal copy
-        // from months-old first install would just sit there forever, silently
-        // stale. Comparing sizes catches any asset change without needing a
-        // manually-maintained version number.
-        val assetSize = context.assets.openFd("devils_lake.mbtiles").use { it.length }
+    private val imageryDb: SQLiteDatabase by lazy {
+        openPack("devils_lake_imagery.mbtiles", "devils_lake_imagery.mbtiles")
+    }
+    private val topoDb: SQLiteDatabase by lazy {
+        openPack("devils_lake_topo.mbtiles", "devils_lake_topo.mbtiles")
+    }
+
+    private fun openPack(assetName: String, destName: String): SQLiteDatabase {
+        val dest = File(context.filesDir, destName)
+        val assetSize = context.assets.openFd(assetName).use { it.length }
         if (!dest.exists() || dest.length() != assetSize) {
-            context.assets.open("devils_lake.mbtiles").use { input ->
+            context.assets.open(assetName).use { input ->
                 FileOutputStream(dest).use { output -> input.copyTo(output) }
             }
         }
-        SQLiteDatabase.openDatabase(dest.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+        return SQLiteDatabase.openDatabase(dest.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
     }
 
     fun ensureStarted() {
-        db // force lazy copy+open before serving the first request
+        imageryDb
+        topoDb
         val alreadyRunning = try {
             isAlive
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
         if (!alreadyRunning) {
@@ -47,20 +52,28 @@ class LocalTileServer(private val context: Context, listenPort: Int = 8085) : Na
     }
 
     override fun serve(session: IHTTPSession): Response {
-        // expects /tiles/{z}/{x}/{y}.jpg  (standard XYZ scheme, as MapLibre requests it)
-        val parts = session.uri.trim('/').split("/")
-        if (parts.size != 4 || parts[0] != "tiles") {
-            return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found: ${session.uri}")
+        val parts = session.uri.trim('/').split('/')
+        // /tiles/{pack}/{z}/{x}/{y}.jpg  OR legacy /tiles/{z}/{x}/{y}.jpg
+        val (pack, z, x, y) = when {
+            parts.size == 5 && parts[0] == "tiles" ->
+                Quadruple(parts[1], parts[2].toIntOrNull(), parts[3].toIntOrNull(), parts[4].substringBefore('.').toIntOrNull())
+            parts.size == 4 && parts[0] == "tiles" ->
+                Quadruple("imagery", parts[1].toIntOrNull(), parts[2].toIntOrNull(), parts[3].substringBefore('.').toIntOrNull())
+            else ->
+                return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found: ${session.uri}")
+        }
+        if (z == null || x == null || y == null) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "bad tile path")
+        }
+        val db = when (pack) {
+            "topo" -> topoDb
+            else -> imageryDb
         }
         return try {
-            val z = parts[1].toInt()
-            val x = parts[2].toInt()
-            val y = parts[3].substringBefore(".").toInt()
-            val tmsRow = (1 shl z) - 1 - y // MBTiles stores rows TMS-style (flipped from XYZ)
-
+            val tmsRow = (1 shl z) - 1 - y
             db.rawQuery(
                 "SELECT tile_data FROM tiles WHERE zoom_level = ? AND tile_column = ? AND tile_row = ?",
-                arrayOf(z.toString(), x.toString(), tmsRow.toString())
+                arrayOf(z.toString(), x.toString(), tmsRow.toString()),
             ).use { cursor ->
                 if (cursor.moveToFirst()) {
                     val bytes = cursor.getBlob(0)
@@ -68,15 +81,17 @@ class LocalTileServer(private val context: Context, listenPort: Int = 8085) : Na
                         Response.Status.OK,
                         "image/jpeg",
                         ByteArrayInputStream(bytes),
-                        bytes.size.toLong()
+                        bytes.size.toLong(),
                     )
                 } else {
-                    Log.w("CragMap", "tile 404: z=$z x=$x y=$y (tmsRow=$tmsRow)")
-                    newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "no tile at z=$z x=$x y=$y")
+                    Log.w("CragMap", "tile 404: pack=$pack z=$z x=$x y=$y")
+                    newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "no tile")
                 }
             }
         } catch (e: Exception) {
             newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", e.message ?: "error")
         }
     }
+
+    private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 }
