@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -46,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -103,8 +106,15 @@ fun AreaSheet(
     onCaptureClimbPhoto: (ClimbEntity) -> Unit = {},
     onOpenOverrideReview: () -> Unit = {}
 ) {
-    val sheetState = rememberModalBottomSheetState()
+    // Half-expanded by default so the map (and selected pin) stay visible
+    // above the sheet — full expand is still available via drag.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val siblingIndex = content.siblings.indexOfFirst { it.uuid == content.area.uuid }
+    LaunchedEffect(content.area.uuid) {
+        // Re-assert half-expanded when paging siblings so the sheet doesn't
+        // jump to full height and cover the map mid-browse.
+        runCatching { sheetState.partialExpand() }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         LazyColumn(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -139,27 +149,57 @@ fun AreaSheet(
                     }
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(content.area.uuid, siblingIndex) {
+                            var total = 0f
+                            detectHorizontalDragGestures(
+                                onDragEnd = {
+                                    when {
+                                        total < -80f && siblingIndex in 0 until content.siblings.lastIndex ->
+                                            onNavigateSibling(1)
+                                        total > 80f && siblingIndex > 0 ->
+                                            onNavigateSibling(-1)
+                                    }
+                                    total = 0f
+                                },
+                                onHorizontalDrag = { _, dragAmount -> total += dragAmount },
+                            )
+                        },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
                         onClick = { onNavigateSibling(-1) },
-                        enabled = siblingIndex > 0
+                        enabled = siblingIndex > 0,
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Filled.ChevronLeft, contentDescription = "Previous")
+                        Icon(
+                            Icons.Filled.ChevronLeft,
+                            contentDescription = "Previous wall",
+                            modifier = Modifier.size(32.dp),
+                        )
                     }
                     Text(
                         text = content.area.name,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 4.dp),
                     )
                     IconButton(
                         onClick = { onNavigateSibling(1) },
-                        enabled = siblingIndex in 0 until content.siblings.lastIndex
+                        enabled = siblingIndex in 0 until content.siblings.lastIndex,
+                        modifier = Modifier.size(48.dp)
                     ) {
-                        Icon(Icons.Filled.ChevronRight, contentDescription = "Next")
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = "Next wall",
+                            modifier = Modifier.size(32.dp),
+                        )
                     }
                 }
                 Divider(modifier = Modifier.padding(top = 4.dp, bottom = 4.dp))
@@ -234,15 +274,13 @@ fun AreaSheet(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
+                        Column(modifier = Modifier.weight(1f).padding(vertical = 6.dp)) {
                             Text(
                                 text = buildAnnotatedString {
                                     append(climb.name)
                                     if (!climb.ydsGrade.isNullOrBlank()) append("  ·  ${climb.ydsGrade}")
                                     if (!climb.climbType.isNullOrBlank()) append("  ·  ${climb.climbType}")
-                                    // OpenBeta's danger/runout rating (PG/PG13/R/X) — not a quality
-                                    // rating, OpenBeta has no star field at all. Colored so it
-                                    // actually catches the eye of someone scanning for a lead.
+                                    // OpenBeta danger/runout (PG/PG13/R/X) — not quality stars.
                                     if (!climb.safetyRating.isNullOrBlank()) {
                                         append("  ·  ")
                                         withStyle(SpanStyle(color = Color(0xFFB00020), fontWeight = FontWeight.Bold)) {
@@ -250,11 +288,10 @@ fun AreaSheet(
                                         }
                                     }
                                 },
-                                fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Normal
+                                fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            if (!climb.description.isNullOrBlank()) {
-                                Text(climb.description)
-                            }
                         }
                         // Only worth setting when a route sits on a different face than its
                         // formation's main pin — see NearMe's honesty-vs-GPS-noise tradeoff.

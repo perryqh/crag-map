@@ -17,9 +17,6 @@ class NearMeTest {
 
     @Test
     fun `haversine approximates one degree of latitude as about 111km`() {
-        // A well-known constant (lines of latitude are equally spaced everywhere)
-        // — a safe way to sanity-check the formula without depending on any
-        // specific crag's real coordinates.
         val d = haversineMeters(43.0, -89.0, 44.0, -89.0)
         assertTrue("expected ~111km, got $d", d in 110_000.0..112_000.0)
     }
@@ -52,5 +49,44 @@ class NearMeTest {
         val noCoords = area("no-coords", null, null)
         val ranked = rankNearbyFormations(43.41353, -89.7158, listOf(noCoords))
         assertEquals(emptyList<NearbyFormation>(), ranked)
+    }
+
+    @Test
+    fun `bearing due north is about zero`() {
+        val b = bearingDegrees(43.0, -89.0, 44.0, -89.0)
+        assertTrue("expected ~0, got $b", b < 1.0 || b > 359.0)
+    }
+
+    @Test
+    fun `bearing due east is about ninety`() {
+        val b = bearingDegrees(43.0, -89.0, 43.0, -88.0)
+        assertTrue("expected ~90, got $b", b in 80.0..100.0)
+    }
+
+    @Test
+    fun `cardinalDirection buckets into eight winds`() {
+        assertEquals("N", cardinalDirection(0.0))
+        assertEquals("NE", cardinalDirection(45.0))
+        assertEquals("E", cardinalDirection(90.0))
+        assertEquals("S", cardinalDirection(180.0))
+        assertEquals("W", cardinalDirection(270.0))
+    }
+
+    @Test
+    fun `facingHint is ahead when heading matches bearing`() {
+        assertEquals("ahead", facingHint(10f, 15.0))
+        assertEquals("to your right", facingHint(0f, 90.0))
+        assertEquals("to your left", facingHint(0f, 270.0))
+        assertEquals("behind you", facingHint(0f, 180.0))
+        assertEquals(null, facingHint(null, 90.0))
+    }
+
+    @Test
+    fun `rankNearbyFormations includes bearing`() {
+        val north = area("north", 43.41453, -89.7158)
+        val ranked = rankNearbyFormations(43.41353, -89.7158, listOf(north), maxDistanceM = 1000.0)
+        assertEquals(1, ranked.size)
+        assertTrue(ranked[0].bearingDegrees < 20.0 || ranked[0].bearingDegrees > 340.0)
+        assertEquals("N", cardinalDirection(ranked[0].bearingDegrees))
     }
 }

@@ -159,6 +159,10 @@ fun MapScreen() {
     var mapLabels by remember { mutableStateOf<List<MapLabel>>(emptyList()) }
     var sheetContent by remember { mutableStateOf<SheetContent?>(null) }
     var nearMeResults by remember { mutableStateOf<List<NearbyFormation>?>(null) }
+    // Quiet status chip — updated whenever we take an on-demand GPS read.
+    var gpsAccuracyM by remember { mutableStateOf<Float?>(null) }
+    var gpsAgeMs by remember { mutableStateOf<Long?>(null) }
+    var deviceHeadingDeg by remember { mutableStateOf<Float?>(null) }
     // Phase 3 field-survey mode (see PinOverride.kt). Off by default for a
     // typical launch, but rememberSaveable so it survives Activity recreation
     // (camera capture, permission dialogs, process death under memory
@@ -685,6 +689,18 @@ fun MapScreen() {
         }
         }
 
+        // Always-offline atlas: quiet GPS quality so cliff-base fixes aren't a surprise.
+        Text(
+            text = gpsStatusLabel(gpsAccuracyM, gpsAgeMs),
+            color = Color.DarkGray,
+            fontSize = 11.sp,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 72.dp)
+                .background(Color(0xCCFFFFFF), RoundedCornerShape(12.dp))
+                .padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+
         // "Near me": one on-demand GPS fix (not continuous polling — see the
         // closed corridor-survey branch this replaces), ranking formations by
         // straight-line distance within a short radius. Deliberately just a
@@ -701,6 +717,9 @@ fun MapScreen() {
                 if (location == null) {
                     Toast.makeText(context, "Still waiting for a GPS fix…", Toast.LENGTH_SHORT).show()
                 } else {
+                    val ageMs = (SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) / 1_000_000L
+                    gpsAccuracyM = location.accuracy
+                    gpsAgeMs = ageMs
                     // Leaf layers only show at high zoom — recenter so yard pins appear.
                     flyTo(location.latitude, location.longitude, zoomForSelectedArea(isLeaf = 1))
                     nearMeResults = rankNearbyFormations(
@@ -709,6 +728,9 @@ fun MapScreen() {
                         leafAreas,
                         maxDistanceM = NEAR_ME_MAX_DISTANCE_M
                     )
+                    scope.launch {
+                        deviceHeadingDeg = readHeadingOnce(context)
+                    }
                 }
             },
             modifier = Modifier
@@ -758,6 +780,7 @@ fun MapScreen() {
                 // isn't necessarily anywhere near what's currently on screen.
                 onSelect = { nearby -> selectArea(nearby.area, flyCamera = true) },
                 onDismiss = { nearMeResults = null },
+                deviceHeadingDegrees = deviceHeadingDeg,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(horizontal = 16.dp, vertical = 80.dp)
